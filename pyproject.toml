@@ -8,10 +8,14 @@ dependencies = [
   "openpyxl>=3.1",
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg>=0.29",
+  "alembic>=1.13",
 ]
 
 [project.scripts]
 semear-inventario = "inventario.cli:main"
+semear-banco = "plataforma.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -23,10 +27,15 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Migrações são geradas pelo Alembic. Reformatá-las à mão só produz ruído
+# no diff e não torna ninguém mais capaz de lê-las.
+extend-exclude = ["migracoes/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

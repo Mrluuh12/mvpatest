@@ -45,7 +45,7 @@ class Natureza(StrEnum):
     OBSERVACAO = "observacao"  # o que de fato é: firmware, modelo, MAC
 
 
-_PRECEDENCIA: dict[Natureza, dict[Origem, int]] = {
+PRECEDENCIA: dict[Natureza, dict[Origem, int]] = {
     Natureza.INTENCAO: {
         Origem.CADASTRADO: 3,
         Origem.DESCOBERTO: 2,
@@ -70,7 +70,7 @@ class Valor(BaseModel):
         """True se este valor deve prevalecer sobre ``outro``."""
         if outro is None:
             return True
-        tabela = _PRECEDENCIA[natureza]
+        tabela = PRECEDENCIA[natureza]
         meu, dele = tabela[self.origem], tabela[outro.origem]
         if meu != dele:
             return meu > dele

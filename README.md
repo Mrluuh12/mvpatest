@@ -1,4 +1,4 @@
-# Semeadura do inventário
+# Plataforma TI + OT — marco M0
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -108,13 +108,41 @@ pode ser operadora na zona corporativa e apenas leitora em OT.
 
 ```bash
 pip install -e . && pip install pytest ruff
-python -m pytest -q      # 63 testes
+python -m pytest -q      # 72 testes
 python -m ruff check src tests
 ```
 
 Os testes são escritos para achar bug, não para passar: cada caso reproduz uma
 inconsistência que existe de verdade nos 723 ativos. Um deles é um teste de
 conservação — a rede de segurança contra o inventário encolher sem ninguém notar.
+
+## Persistência
+
+O inventário vive em PostgreSQL 16. Duas escolhas de esquema carregam o peso do
+resto do projeto:
+
+**Uma linha por origem, não um valor vencedor.** A tabela `campo` guarda o valor
+derivado, o descoberto e o cadastrado *lado a lado*, cada um na sua linha, e o
+vencedor é calculado na leitura. Isso transforma a promessa *"rodar a semeadura
+de novo não apaga correção humana"* de disciplina em **impossibilidade
+estrutural**: a origem faz parte da chave primária, então a escrita derivada não
+tem como alcançar a linha cadastrada. De quebra, a divergência entre cadastro e
+realidade deixa de ser um log passageiro e vira uma consulta.
+
+**A aresta tem validade temporal, e o banco impede sobreposição.** Um
+`EXCLUDE … USING gist` garante que a mesma aresta não exista duas vezes no mesmo
+instante. Não é validação que alguém pode esquecer de chamar: é recusa do banco.
+É a fundação do grafo temporal do marco M2 — *"quem era vizinho do nó X às
+14h37"* já tem onde ser respondido.
+
+```bash
+export PLATAFORMA_BANCO="postgresql+asyncpg://usuario@host:5432/plataforma"
+alembic upgrade head
+semear-banco inventario.xlsx
+```
+
+O comando verifica a conservação ao final e **sai com código 1 se ela quebrar** —
+inventário que encolhe sem ninguém notar é a pior falha possível aqui.
 
 ## API de leitura
 
@@ -136,7 +164,6 @@ se tem coletor e, quando não tem, **por quê**. É o que permite a interface di
 
 - Coletor ICMP (a outra metade do marco M1)
 - Canal B — ingestão de fatos estruturais e o grafo temporal
-- Persistência: hoje a saída é JSON, não Postgres. **É a lacuna que destrava M1**
-- Interface: o shell foi iniciado e removido — volta em M1, quando a
-  persistência existir e a forma da API estiver acordada
+- Interface: o shell foi iniciado e removido — volta em M1, agora que a
+  persistência existe e a forma da API está acordada
 - Subsistema de ação
