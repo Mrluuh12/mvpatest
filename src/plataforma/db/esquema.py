@@ -278,3 +278,18 @@ auditoria = Table(
     Index("ix_auditoria_sujeito", "sujeito"),
     Index("ix_auditoria_login", "login"),
 )
+
+
+#: Arranjo de tela por escopo. A cascata é a mesma das imagens:
+#: ``frota:CA`` antes de ``padrao_ativo``; ``papel:radio_mesh`` antes de
+#: ``padrao_dispositivo``. Configura-se o tipo, não a instância — um arranjo
+#: por frota serve os 299 caminhões.
+arranjo = Table(
+    "arranjo",
+    metadata,
+    Column("escopo", Text, primary_key=True),
+    Column("contexto", String(16), nullable=False),
+    Column("cartoes", JSONB, nullable=False),
+    Column("atualizado_em", DateTime(timezone=True), nullable=False),
+    Column("atualizado_por", Text),
+)

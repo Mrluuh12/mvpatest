@@ -57,8 +57,9 @@
   const S = {
     eu: null, exigeLogin: false,
     ativos: [], sinais: [], achados: {}, resumo: {}, saude: {}, transicoes: [],
-    sel: null, filtro: "", rapido: null, aba: "ativo",
+    sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
+    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false,
   };
 
   /* três situações distintas, nunca duas */
@@ -169,7 +170,9 @@
       <h3>${esc(t)}</h3><div class="corpo"><p>${esc(p)}</p></div>
       <div class="pe"><button class="bt" data-fechar>Fechar</button></div></div></div>`;
   };
-  const escolher = (titulo, opcoes) => {
+  let aoDecidir = pedirArquivo;
+  const escolher = (titulo, opcoes, entao) => {
+    aoDecidir = entao || pedirArquivo;
     $("modal").innerHTML = `<div class="veu" data-fechar><div class="modal">
       <h3>${esc(titulo)}</h3><div class="corpo"><div class="escolha">
       ${opcoes.map((o) => `<button data-sujeito="${esc(o.sujeito)}">
@@ -180,7 +183,7 @@
   $("modal").addEventListener("click", (e) => {
     if (e.target.dataset.fechar !== undefined) return fechar();
     const b = e.target.closest("[data-sujeito]");
-    if (b) { const s = b.dataset.sujeito; fechar(); pedirArquivo(s); }
+    if (b) { const s = b.dataset.sujeito; fechar(); aoDecidir(s); }
   });
 
   /* ============================== barra ================================= */
@@ -254,7 +257,7 @@
       const aberto = S.abertos.has(fr) || revelando;
       const folhas = aberto ? itens.map((a) => {
         const st = saudeAtivo(S.fichas.get(a.ativo_id));
-        return `<button class="folha" data-ativo="${esc(a.ativo_id)}"
+        return `<button class="folha e-${st.cls}" data-ativo="${esc(a.ativo_id)}"
           aria-current="${a.ativo_id === S.sel}">
           <span class="pt ${st.cls === "nd" ? "" : st.cls}"></span>
           <span class="col"><b>${esc(a.ativo_id)}</b>
@@ -304,7 +307,9 @@
       </div></div>`;
   }
 
-  const cxResumo = (a, ds) => `<section class="cx"><header><h2>Resumo do Ativo</h2></header>
+  const tit = (c, padrao) => esc(c && c.titulo ? c.titulo : padrao);
+
+  const cxResumo = (c, a, ds) => `<section class="cx"><header><h2>${tit(c, "Resumo do Ativo")}</h2></header>
     <div class="conteudo"><dl class="pares">
       <dt>Código</dt><dd class="mono">${esc(a.ativo_id)}</dd>
       <dt>Frota</dt><dd>${esc(FROTA[a.frota] || a.frota)}</dd>
@@ -315,11 +320,12 @@
       <dt>Zonas</dt><dd class="mono">${[...new Set(ds.map((d) => d.zona))].join(", ")}</dd>
     </dl></div></section>`;
 
-  function cxComponentes(ds) {
+  function cxComponentes(c0, ds) {
     const pecas = ds.map((d) => {
       const s = situacao(d);
       const img = foto(d.imagem);
-      return `<article class="peca z-${esc(d.zona)}">
+      return `<article class="peca clicavel e-${s.cls || "nd"} z-${esc(d.zona)}"
+        data-disp="${esc(d.chave)}">
         ${img ? `<img class="foto" src="${img}" alt="">`
               : `<div class="foto vazia" data-foto-disp="${esc(d.chave)}">+ imagem</div>`}
         ${img ? `<button class="trocar" data-foto-disp="${esc(d.chave)}" title="Trocar imagem">⌾</button>` : ""}
@@ -328,23 +334,23 @@
           <span class="selo ${s.selo}" title="${esc(s.txt)}">${esc(s.curto)}</span>
         </div></article>`;
     }).join("");
-    return `<section class="cx"><header><h2>Componentes</h2>
+    return `<section class="cx"><header><h2>${tit(c0, "Componentes")}</h2>
       <span class="dir">${ds.length} peças</span></header>
       <div class="conteudo rente diagrama">
         <div class="raiz"><span class="chip">${esc(S.sel)}</span></div>
         <div class="tronco"></div><div class="pecas">${pecas}</div>
       </div>
       <div class="legenda">
-        <span><i style="background:var(--verde)"></i>Responde</span>
-        <span><i style="background:var(--vermelho)"></i>Sem resposta</span>
-        <span><i style="background:var(--linha-forte)"></i>Não sondado</span>
-        <span><i style="background:var(--ambar)"></i>Zona OT</span>
+        <span><i style="background:var(--verde)"></i>Contorno verde: responde</span>
+        <span><i style="background:var(--vermelho)"></i>Contorno vermelho: sem resposta</span>
+        <span><i style="background:var(--ambar)"></i>Contorno âmbar: incerto</span>
+        <span><i style="background:var(--linha-forte)"></i>Tracejado: não sondado</span>
       </div></section>`;
   }
 
   /** Alcance = respondendo ÷ sondados. A fórmula fica à vista: número composto
    *  sem definição visível é número em que ninguém confia. */
-  function cxAlcance(ds) {
+  function cxAlcance(c0, ds) {
     const c = contar(ds);
     const pct = c.sondados ? Math.round((100 * c.vivos) / c.sondados) : null;
     const r = 52, circ = 2 * Math.PI * r;
@@ -352,7 +358,7 @@
       : pct === 100 ? "var(--verde)" : pct === 0 ? "var(--vermelho)" : "var(--ambar)";
     const rotulo = pct === null ? "Sem coleta"
       : pct === 100 ? "Operando" : pct === 0 ? "Sem resposta" : "Atenção";
-    return `<section class="cx"><header><h2>Alcance</h2></header>
+    return `<section class="cx"><header><h2>${tit(c0, "Alcance")}</h2></header>
       <div class="conteudo"><div class="saude">
         <div class="anel">
           <svg width="118" height="118" viewBox="0 0 118 118" aria-hidden="true">
@@ -372,7 +378,7 @@
       </div></div></section>`;
   }
 
-  function cxTelemetria(ds) {
+  function cxTelemetria(c0, ds) {
     const vivos = ds.filter((d) => d.alcancavel);
     const lats = vivos.map((d) => d.latencia_ms).filter((v) => v !== null && v !== undefined);
     const media = lats.length ? (lats.reduce((a, b) => a + b, 0) / lats.length).toFixed(2) + " ms" : null;
@@ -385,7 +391,7 @@
       ${valor !== null && valor !== undefined
         ? `<span class="v">${esc(valor)}</span>`
         : `<span class="v nulo">${esc(motivo || "—")}</span>`}</div>`;
-    return `<section class="cx"><header><h2>Telemetria</h2></header>
+    return `<section class="cx"><header><h2>${tit(c0, "Telemetria")}</h2></header>
       <div class="conteudo"><div class="telem">
         ${linha(ico.raio, "Respondendo", `${vivos.length} de ${ds.length}`)}
         ${linha(ico.relogio, "Latência média", media, "sem resposta")}
@@ -399,14 +405,14 @@
     </section>`;
   }
 
-  function cxTransicoes() {
+  function cxTransicoes(c0) {
     const linhas = S.transicoes.slice(0, 6).map((t) => `<tr>
       <td class="mono">${esc(hora(t.em))}</td>
       <td class="nome">${esc(t.nome)}</td>
       <td><span class="selo ${t.para ? "verde" : "vermelho"}">
         ${t.de === null ? "primeira leitura" : t.para ? "voltou" : "caiu"}</span></td>
     </tr>`).join("");
-    return `<section class="cx"><header><h2>Últimas mudanças</h2>
+    return `<section class="cx"><header><h2>${tit(c0, "Últimas mudanças")}</h2>
       <span class="dir">${S.transicoes.length}</span></header>
       <div class="conteudo rente"><div class="rol"><table>
         <thead><tr><th>Quando</th><th>Dispositivo</th><th>O quê</th></tr></thead>
@@ -414,7 +420,7 @@
       </table></div></div></section>`;
   }
 
-  const cxAcoes = () => `<section class="cx"><header><h2>Ações Rápidas</h2></header>
+  const cxAcoes = (c0) => `<section class="cx"><header><h2>${tit(c0, "Ações Rápidas")}</h2></header>
     <div class="conteudo"><div class="acoes">
       ${[[ico.play, "Reiniciar dispositivo"], [ico.baixar, "Exportar logs"],
          [ico.terminal, "Abrir terminal"], [ico.lupa2, "Executar diagnóstico"]]
@@ -438,13 +444,13 @@
       </table></div></div></section>`;
   }
 
-  function tabelaDispositivos(ds) {
+  function tabelaDispositivos(c0, ds) {
     const linhas = ds.map((d) => {
       const s = situacao(d);
       const img = foto(d.imagem);
       const num = (v, suf) => (v === null || v === undefined)
         ? `<td class="nulo">—</td>` : `<td class="mono">${v}${suf}</td>`;
-      return `<tr>
+      return `<tr class="clicavel" data-disp="${esc(d.chave)}">
         <td>${img ? `<img class="mini" src="${img}" alt="">` : ""}</td>
         <td class="nome">${esc(d.nome)}</td>
         <td>${esc(PAPEL[d.papel] || d.papel)}</td>
@@ -456,7 +462,7 @@
         ${num(d.perda_pct == null ? null : d.perda_pct.toFixed(0), "%")}
       </tr>`;
     }).join("");
-    return `<section class="cx"><header><h2>Dispositivos</h2>
+    return `<section class="cx"><header><h2>${tit(c0, "Dispositivos")}</h2>
       <span class="dir">${ds.length}</span></header>
       <div class="conteudo rente"><div class="rol"><table>
       <thead><tr><th></th><th>Nome</th><th>Papel</th><th>IP</th><th>Zona</th>
@@ -464,15 +470,149 @@
       <tbody>${linhas}</tbody></table></div></div></section>`;
   }
 
+  /* -------------------- cartões da ficha do dispositivo ------------------ */
+
+  const cxResumoDisp = (c, d) => `<section class="cx">
+    <header><h2>${tit(c, "Resumo do dispositivo")}</h2></header>
+    <div class="conteudo"><dl class="pares">
+      <dt>Nome</dt><dd class="mono">${esc(d.nome)}</dd>
+      <dt>Papel</dt><dd>${esc(PAPEL[d.papel] || d.papel)}</dd>
+      <dt>Endereço</dt><dd class="mono">${esc(d.ip || "—")}</dd>
+      <dt>Zona</dt><dd><span class="selo liso ${ZONA_SELO[d.zona] || "neutro"}">${esc(d.zona)}</span></dd>
+      <dt>Ativo</dt><dd class="mono">${esc(d.ativo_id || "—")}</dd>
+      <dt>Fabricante</dt><dd>${esc(d.fabricante || "—")}</dd>
+    </dl></div></section>`;
+
+  const cxIdentidade = (c, d) => {
+    if (!d) return "";
+    const forte = d.identidade === "mac";
+    return `<section class="cx"><header><h2>${tit(c, "Identidade")}</h2></header>
+      <div class="conteudo">
+        <div class="telem">
+          <div class="l">${ico.escudo}Resolve por
+            <span class="v"><span class="selo ${forte ? "verde" : "ambar"}">${esc(d.identidade)}</span></span></div>
+          <div class="l">${ico.rede}Chave<span class="v">${esc(d.chave)}</span></div>
+        </div>
+        ${forte ? "" : `<p class="aviso-inline">Sem MAC, a identidade cai para o nome —
+          mais frágil, porque nome se repete. 47% do cadastro está assim.</p>`}
+      </div></section>`;
+  };
+
+  function cxImagens(c, x) {
+    const alvo = x.dispositivo || x.ativo;
+    const img = foto(alvo.imagem);
+    const gatilho = x.dispositivo
+      ? `data-foto-disp="${esc(x.dispositivo.chave)}"` : `data-foto-ativo`;
+    return `<section class="cx"><header><h2>${tit(c, "Imagens")}</h2></header>
+      <div class="conteudo">
+        ${img ? `<img class="foto-grande" src="${img}" alt="">`
+              : `<div class="foto-grande vazia" ${gatilho}>+ adicionar imagem</div>`}
+        ${img ? `<button class="bt" style="margin-top:10px" ${gatilho}>Trocar imagem</button>` : ""}
+      </div></section>`;
+  }
+
+  const cxTexto = (c) => `<section class="cx">
+    <header><h2>${tit(c, "Observações")}</h2></header>
+    <div class="conteudo"><p style="margin:0;white-space:pre-wrap">${
+      esc((c.opcoes && c.opcoes.conteudo) || "")
+      || `<span class="nada" style="padding:0">sem conteúdo — edite a tela para escrever</span>`
+    }</p></div></section>`;
+
+  //: Papéis que têm rádio. Só neles faz sentido reservar espaço para RSSI —
+  //: num conversor CAN, "RSSI: aguardando coletor" é uma promessa falsa.
+  const COM_RF = new Set(["radio_mesh", "radio_ptp", "radio_ptmp", "gateway_pneu", "hub_ptx"]);
+
+  function cxTelemetriaDisp(c, d) {
+    const semColetor = (fam) => {
+      const s = S.sinais.find((x) => x.familia === fam);
+      return s && !s.disponivel ? s.motivo : null;
+    };
+    const st = situacao(d);
+    const linha = (i, r, v, m) => `<div class="l">${i}${r}
+      ${v !== null && v !== undefined ? `<span class="v">${esc(v)}</span>`
+        : `<span class="v nulo">${esc(m || "—")}</span>`}</div>`;
+    return `<section class="cx"><header><h2>${tit(c, "Telemetria")}</h2></header>
+      <div class="conteudo"><div class="telem">
+        ${linha(ico.raio, "Estado", st.txt)}
+        ${linha(ico.relogio, "Latência",
+          d.latencia_ms == null ? null : d.latencia_ms.toFixed(2) + " ms", "sem resposta")}
+        ${linha(ico.onda, "Perda", d.perda_pct == null ? null : d.perda_pct.toFixed(0) + "%")}
+        ${COM_RF.has(d.papel) ? linha(ico.caixa, "RSSI", null, semColetor("rf")) : ""}
+        ${linha(ico.relogio, "Última leitura", d.visto_em ? hora(d.visto_em) : null, "nunca sondado")}
+      </div></div></section>`;
+  }
+
+  function cxAuditoria(c) {
+    const linhas = (S.auditoria || []).slice(0, 8).map((a) => `<tr>
+      <td class="mono">${esc(hora(a.em))}</td>
+      <td class="mono">${esc(a.login || "—")}</td>
+      <td>${esc(a.acao)}</td></tr>`).join("");
+    return `<section class="cx"><header><h2>${tit(c, "Histórico de alterações")}</h2></header>
+      <div class="conteudo rente"><div class="rol"><table>
+      <thead><tr><th>Quando</th><th>Quem</th><th>O quê</th></tr></thead>
+      <tbody>${linhas || `<tr><td colspan="3" class="nulo">sem alterações registradas</td></tr>`}</tbody>
+      </table></div></div></section>`;
+  }
+
+  /* ================== renderização dirigida pelo arranjo ================= */
+
+  /** Cada tipo de cartão sabe se desenhar a partir do contexto. Acrescentar um
+   *  tipo é acrescentar uma entrada aqui e outra no catálogo do servidor — o
+   *  catálogo é fechado de propósito. */
+  const CARTOES = {
+    resumo: (c, x) => x.dispositivo ? cxResumoDisp(c, x.dispositivo)
+                                    : cxResumo(c, x.ativo, x.dispositivos),
+    alcance: (c, x) => cxAlcance(c, x.dispositivos),
+    componentes: (c, x) => cxComponentes(c, x.dispositivos),
+    telemetria: (c, x) => x.dispositivo ? cxTelemetriaDisp(c, x.dispositivo)
+                                        : cxTelemetria(c, x.dispositivos),
+    transicoes: (c) => cxTransicoes(c),
+    dispositivos: (c, x) => tabelaDispositivos(c, x.dispositivos),
+    identidade: (c, x) => cxIdentidade(c, x.dispositivo),
+    imagens: (c, x) => cxImagens(c, x),
+    texto: (c) => cxTexto(c),
+    auditoria: (c) => cxAuditoria(c),
+    acoes: (c) => cxAcoes(c),
+  };
+
+  const LARGURA = { 1: "g1c", 2: "g2c", 3: "g3c", 4: "g4c" };
+
+  function desenharArranjo(x) {
+    const cartoes = (S.arranjo?.cartoes || []).filter((c) => c.visivel !== false);
+    return `<div class="tela">${cartoes.map((c, i) => {
+      const desenhar = CARTOES[c.tipo];
+      const corpo = desenhar ? desenhar(c, x)
+        : `<section class="cx"><header><h2>${esc(c.tipo)}</h2></header>
+           <div class="conteudo"><p class="nada">tipo de cartão desconhecido</p></div></section>`;
+      const ferramentas = S.editandoTela ? `<div class="ferramentas">
+        <button data-mover="${i}:-1" title="Subir">↑</button>
+        <button data-mover="${i}:1" title="Descer">↓</button>
+        <button data-largura="${i}" title="Largura">⇔ ${c.largura}</button>
+        <button data-renomear="${i}" title="Renomear">✎</button>
+        <button data-remover="${i}" title="Remover">✕</button></div>` : "";
+      return `<div class="vaga ${LARGURA[c.largura] || "g1c"}
+        ${S.editandoTela ? "editando" : ""}">${ferramentas}${corpo}</div>`;
+    }).join("")}</div>`;
+  }
+
+  function barraDeTela() {
+    if (!pode("editar_painel")) return "";
+    const origem = S.origemArranjo === "embutido"
+      ? "arranjo embutido" : `arranjo de <b>${esc(S.origemArranjo)}</b>`;
+    return `<div class="barra-tela">
+      <span>Esta tela usa o ${origem}</span>
+      ${S.editandoTela ? `
+        <button class="bt" data-add-cartao>+ Cartão</button>
+        <button class="bt" data-salvar-tela>Salvar arranjo</button>
+        <button class="bt" data-cancelar-tela>Cancelar</button>`
+        : `<button class="bt" data-editar-tela>${ico.lapis} Personalizar tela</button>`}
+    </div>`;
+  }
+
   function pintarAtivo(f) {
     const { ativo: a, dispositivos: ds } = f;
-    // O diagrama ganha linha própria: com 12 componentes, espremê-lo numa
-    // coluna produz um cartão estreito e altíssimo que desequilibra a página.
-    $("centro").innerHTML = trilha(a) + topoAtivo(a, ds) +
-      `<div class="grade g3">${cxResumo(a, ds)}${cxAlcance(ds)}${cxTelemetria(ds)}</div>` +
-      `<div class="grade g1">${cxComponentes(ds)}</div>` +
-      `<div class="grade g2">${cxTransicoes()}${cxAcoes()}</div>` +
-      `<div class="grade g1">${tabelaDispositivos(ds)}</div>`;
+    $("centro").innerHTML = trilha(a) + topoAtivo(a, ds) + barraDeTela() +
+      desenharArranjo({ ativo: a, dispositivos: ds, dispositivo: null });
   }
 
   /* ============================ outras abas ============================= */
@@ -550,20 +690,126 @@
     return S.fichas.get(id);
   }
 
+  /* --------------------- arranjo: carregar e persistir ------------------ */
+
+  async function carregarArranjo(contexto, chave, grupo) {
+    // Em edição o arranjo em memória é a verdade: buscá-lo de novo a cada
+    // repintura apagaria a mudança que acabou de ser feita — e cada mexida
+    // repinta.
+    if (S.editandoTela && S.arranjo) return;
+    const q = new URLSearchParams({ contexto, chave });
+    if (grupo) q.set("grupo", grupo);
+    try {
+      const r = await api(`/api/v1/arranjo?${q}`);
+      S.arranjo = r.arranjo; S.origemArranjo = r.origem;
+    } catch {
+      S.arranjo = null; S.origemArranjo = "embutido";
+    }
+  }
+
+  /** Onde gravar decide o alcance: esta máquina, ou toda a frota. É a mesma
+   *  escolha das imagens, e pela mesma razão — arrumar 299 telas à mão não é
+   *  trabalho que alguém termine. */
+  function escoposDeGravacao(x) {
+    if (x.dispositivo) {
+      const d = x.dispositivo;
+      return [
+        { sujeito: `disp:${d.chave}`, titulo: "Somente este aparelho", nota: d.nome },
+        { sujeito: `papel:${d.papel}`,
+          titulo: `Todo aparelho com papel ${PAPEL[d.papel] || d.papel}`,
+          nota: "vale para os demais do mesmo papel" },
+        { sujeito: "padrao_dispositivo", titulo: "Qualquer dispositivo",
+          nota: "só onde não houver arranjo mais específico" },
+      ];
+    }
+    const a = x.ativo;
+    return [
+      { sujeito: `ativo:${a.ativo_id}`, titulo: `Somente ${a.ativo_id}`, nota: "esta máquina" },
+      { sujeito: `frota:${a.frota}`, titulo: `Toda a frota ${FROTA[a.frota] || a.frota}`,
+        nota: "vale para todos os ativos da frota" },
+      { sujeito: "padrao_ativo", titulo: "Qualquer ativo",
+        nota: "só onde não houver arranjo mais específico" },
+    ];
+  }
+
+  /** Só busca o histórico se algum cartão for mostrá-lo: quem não pôs o cartão
+   *  na tela não deve pagar a consulta. */
+  async function carregarAuditoria(sujeito) {
+    const quer = (S.arranjo?.cartoes || []).some((c) => c.tipo === "auditoria" && c.visivel !== false);
+    if (!quer) { S.auditoria = []; return; }
+    S.auditoria = await api(
+      `/api/v1/auditoria?sujeito=${encodeURIComponent(sujeito)}&limite=8`).catch(() => []);
+  }
+
+  function contextoAtual(f) {
+    const d = S.dispSel ? f.dispositivos.find((x) => x.chave === S.dispSel) : null;
+    return { ativo: f.ativo, dispositivos: f.dispositivos, dispositivo: d };
+  }
+
+  async function gravarArranjo(x, escopo) {
+    const contexto = x.dispositivo ? "dispositivo" : "ativo";
+    await api(`/api/v1/arranjos/${encodeURIComponent(escopo)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ escopo, contexto, cartoes: S.arranjo.cartoes }),
+    });
+    S.editandoTela = false;
+    await pintarAba();
+  }
+
+  function pintarDispositivo(f, d) {
+    const x = { ativo: f.ativo, dispositivos: f.dispositivos, dispositivo: d };
+    const st = situacao(d);
+    const img = foto(d.imagem);
+    $("centro").innerHTML = `<nav class="trilha">
+        <button data-aba-ir="ativo">Ativos</button><span>/</span>
+        <button data-voltar-ativo>${esc(f.ativo.ativo_id)}</button><span>/</span>
+        <b>${esc(d.nome)}</b></nav>
+      <div class="topo-ativo">
+        ${img ? `<img class="retrato" src="${img}" alt="" data-foto-disp="${esc(d.chave)}">`
+              : `<div class="retrato vazia" data-foto-disp="${esc(d.chave)}">+ imagem</div>`}
+        <div class="tit">
+          <h1>${esc(d.nome)} <span class="selo ${st.selo}">${esc(st.curto)}</span></h1>
+          <div class="subtit">
+            <span><b>Papel:</b> ${esc(PAPEL[d.papel] || d.papel)}</span>
+            <span><b>Endereço:</b> ${esc(d.ip || "—")}</span>
+            <span><b>Ativo:</b> ${esc(d.ativo_id || "—")}</span>
+          </div>
+        </div>
+        <div class="botoes">
+          <button class="bt" data-voltar-ativo>Voltar ao ativo</button>
+          <button class="bt" data-foto-disp="${esc(d.chave)}">${ico.lapis} Imagem</button>
+        </div></div>` + barraDeTela() + desenharArranjo(x);
+  }
+
   async function pintarAba() {
     if (S.aba === "coleta") return $("centro").innerHTML = `<div class="grade g1">${cxColeta()}</div>`;
     if (S.aba === "cobertura") return pintarCobertura();
     if (S.aba === "cadastro") return pintarCadastro();
     if (!S.sel) return;
     const f = await ficha(S.sel);
-    S.transicoes = await api(`/api/v1/transicoes?ativo_id=${encodeURIComponent(S.sel)}&limite=10`)
-      .catch(() => []);
+    // Resolver o dispositivo antes de buscar as mudanças: uma seleção que
+    // sobrou de outro ativo pediria o histórico de um aparelho que não está
+    // nesta tela.
+    const d = S.dispSel ? f.dispositivos.find((x) => x.chave === S.dispSel) : null;
+    if (!d) S.dispSel = null;
+    const alvo = d ? `chave=${encodeURIComponent(d.chave)}`
+                   : `ativo_id=${encodeURIComponent(S.sel)}`;
+    S.transicoes = await api(`/api/v1/transicoes?${alvo}&limite=10`).catch(() => []);
     pintarArvore();
     if (S.aba === "dispositivos") {
       $("centro").innerHTML = trilha(f.ativo) +
-        `<div class="grade g1">${tabelaDispositivos(f.dispositivos)}</div>`;
+        `<div class="grade g1">${tabelaDispositivos(null, f.dispositivos)}</div>`;
       return;
     }
+    if (d) {
+      await carregarArranjo("dispositivo", d.chave, d.papel);
+      await carregarAuditoria(`disp:${d.chave}`);
+      pintarDispositivo(f, d);
+      return;
+    }
+    await carregarArranjo("ativo", f.ativo.ativo_id, f.ativo.frota);
+    await carregarAuditoria(`ativo:${f.ativo.ativo_id}`);
     pintarAtivo(f);
   }
 
@@ -585,9 +831,92 @@
     $("atualizado").textContent = `Atualizado ${new Date().toLocaleTimeString("pt-BR")}`;
   }
 
+  /* ---------------------- modo de edição da tela ------------------------ */
+
+  function modalCartoes(contexto) {
+    const cabem = S.catalogo.filter((d) => d.contextos.includes(contexto));
+    $("modal").innerHTML = `<div class="veu" data-fechar><div class="modal largo">
+      <h3>Acrescentar cartão</h3><div class="corpo"><div class="escolha">
+      ${cabem.map((d) => `<button ${d.disponivel ? `data-novo="${esc(d.tipo)}"` : "disabled"}>
+        <b>${esc(d.titulo_padrao)}${d.disponivel ? "" : " — ainda não"}</b>
+        <span>${esc(d.disponivel ? d.descricao : d.motivo)}</span></button>`).join("")}
+      </div></div><div class="pe"><button class="bt" data-fechar>Cancelar</button></div>
+    </div></div>`;
+  }
+
+  $("modal").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-novo]");
+    if (!b) return;
+    const def = S.catalogo.find((d) => d.tipo === b.dataset.novo);
+    S.arranjo.cartoes = [...S.arranjo.cartoes,
+      { tipo: def.tipo, titulo: null, largura: 1, visivel: true, opcoes: {} }];
+    fechar(); pintarAba();
+  });
+
+  /** Mexe no arranjo em memória e repinta. Nada vai ao banco antes de Salvar —
+   *  quem experimenta precisa poder desistir. */
+  async function editarTela(e, x) {
+    const cs = [...S.arranjo.cartoes];
+    const mv = e.target.closest("[data-mover]");
+    if (mv) {
+      const [i, dir] = mv.dataset.mover.split(":").map(Number);
+      const j = i + dir;
+      if (j < 0 || j >= cs.length) return true;
+      [cs[i], cs[j]] = [cs[j], cs[i]];
+      S.arranjo.cartoes = cs; await pintarAba(); return true;
+    }
+    const lg = e.target.closest("[data-largura]");
+    if (lg) {
+      const i = Number(lg.dataset.largura);
+      cs[i] = { ...cs[i], largura: (cs[i].largura % 4) + 1 };
+      S.arranjo.cartoes = cs; await pintarAba(); return true;
+    }
+    const rn = e.target.closest("[data-renomear]");
+    if (rn) {
+      const i = Number(rn.dataset.renomear);
+      const def = S.catalogo.find((d) => d.tipo === cs[i].tipo);
+      const novo = prompt("Título do cartão:", cs[i].titulo || def?.titulo_padrao || "");
+      if (novo === null) return true;
+      cs[i] = { ...cs[i], titulo: novo.trim() || null };
+      S.arranjo.cartoes = cs; await pintarAba(); return true;
+    }
+    const rm = e.target.closest("[data-remover]");
+    if (rm) {
+      const i = Number(rm.dataset.remover);
+      if (cs.length === 1) { avisar("Não dá", "Uma tela precisa de ao menos um cartão."); return true; }
+      cs.splice(i, 1);
+      S.arranjo.cartoes = cs; await pintarAba(); return true;
+    }
+    if (e.target.closest("[data-add-cartao]")) {
+      modalCartoes(x.dispositivo ? "dispositivo" : "ativo"); return true;
+    }
+    if (e.target.closest("[data-salvar-tela]")) {
+      escolher("Para onde vale este arranjo?", escoposDeGravacao(x),
+        (escopo) => gravarArranjo(x, escopo).catch((erro) =>
+          avisar("Não salvou", erro.message)));
+      return true;
+    }
+    if (e.target.closest("[data-cancelar-tela]")) {
+      S.editandoTela = false; await pintarAba(); return true;
+    }
+    return false;
+  }
+
   document.body.addEventListener("click", async (e) => {
     if (e.target.closest("[data-sair]")) return sair();
     if (e.target.closest("[data-entrar]")) return telaEntrada();
+    if (e.target.closest("[data-editar-tela]")) {
+      S.editandoTela = true; await pintarAba(); return;
+    }
+    if (S.editandoTela && S.arranjo && S.sel) {
+      if (await editarTela(e, contextoAtual(await ficha(S.sel)))) return;
+    }
+    const dp = e.target.closest("[data-disp]");
+    if (dp) { S.dispSel = dp.dataset.disp; S.editandoTela = false;
+              S.aba = "ativo"; marcarAba(); await pintarAba(); return; }
+    if (e.target.closest("[data-voltar-ativo]")) {
+      S.dispSel = null; S.editandoTela = false; await pintarAba(); return;
+    }
     if (e.target.closest("[data-editar-ativo]")) {
       const b = e.target.closest("[data-editar-ativo]");
       if (!b.disabled) return modalEdicao((await ficha(S.sel)).ativo);
@@ -602,7 +931,7 @@
               S.abertos.has(k) ? S.abertos.delete(k) : S.abertos.add(k);
               pintarArvore(); return; }
     const at = e.target.closest("[data-ativo]");
-    if (at) { S.sel = at.dataset.ativo;
+    if (at) { S.sel = at.dataset.ativo; S.dispSel = null; S.editandoTela = false;
               if (!["dispositivos"].includes(S.aba)) S.aba = "ativo";
               marcarAba(); await pintarAba(); return; }
     const rp = e.target.closest("[data-rapido]");
@@ -625,7 +954,8 @@
       const d = f.dispositivos.find((x) => x.chave === fd.dataset.fotoDisp);
       if (d) escolher("Imagem do dispositivo", [
         { sujeito: `disp:${d.chave}`, titulo: "Somente este aparelho", nota: d.nome },
-        { sujeito: `papel:${d.papel}`, titulo: `Todos os ${PAPEL[d.papel] || d.papel}`,
+        { sujeito: `papel:${d.papel}`,
+          titulo: `Todo aparelho com papel ${PAPEL[d.papel] || d.papel}`,
           nota: "vale para todo dispositivo com este papel" },
       ]);
     }
@@ -646,6 +976,7 @@
     const saude = await api("/api/v1/saude").catch(() => ({}));
     S.exigeLogin = !!saude.exige_login;
     if (S.exigeLogin && !S.eu.autenticado) { telaEntrada(); return; }
+    S.catalogo = await api("/api/v1/catalogo").catch(() => []);
     await atualizar();
   }
 

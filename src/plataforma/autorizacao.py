@@ -27,7 +27,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from inventario.modelo import Natureza, PapelUsuario, Permissao, Usuario, Zona
-from plataforma.db import contas
+from plataforma.arranjos import CATALOGO, Arranjo, Contexto
+from plataforma.db import contas, telas
 from plataforma.db.esquema import dispositivo
 from plataforma.db.repositorio_pg import (
     cadastrar_campo,
@@ -254,6 +255,77 @@ def criar_rotas(obter_engine) -> APIRouter:
                 detalhe={"de": atual.value, "para": nova.value},
             )
         return {"chave": chave, "zona": nova.value}
+
+    # ------------------------------ arranjos -----------------------------
+
+    @rotas.get("/api/v1/catalogo", tags=["arranjos"])
+    async def catalogo() -> list[dict]:
+        """Os tipos de cartão que existem. Lista fechada de propósito."""
+        return [d.model_dump(mode="json") for d in CATALOGO]
+
+    @rotas.get("/api/v1/arranjos", tags=["arranjos"])
+    async def listar_arranjos(conta=Depends(conta_atual)) -> list[dict]:
+        exigir(conta, Permissao.VER, Zona.CORPORATIVA)
+        motor = engine_ou_erro()
+        async with motor.connect() as conexao:
+            return await telas.listar(conexao)
+
+    @rotas.get("/api/v1/arranjo", tags=["arranjos"])
+    async def resolver_arranjo(
+        contexto: Contexto, chave: str, grupo: str | None = None
+    ) -> dict:
+        """Percorre a cascata e diz **de onde** o arranjo veio.
+
+        Sem informar a origem, quem edita não sabe se está mexendo na tela
+        daquela máquina ou na de toda a frota.
+        """
+        motor = obter_engine()
+        if motor is None:
+            from plataforma.arranjos import PADROES
+
+            padrao = PADROES[
+                "padrao_ativo" if contexto is Contexto.ATIVO else "padrao_dispositivo"
+            ]
+            return {"arranjo": padrao.model_dump(mode="json"), "origem": "embutido"}
+        async with motor.connect() as conexao:
+            arr, origem = await telas.resolver(conexao, contexto, chave, grupo)
+        return {"arranjo": arr.model_dump(mode="json"), "origem": origem}
+
+    @rotas.put("/api/v1/arranjos/{escopo}", tags=["arranjos"])
+    async def salvar_arranjo(
+        escopo: str, corpo: Arranjo, conta=Depends(conta_atual)
+    ) -> dict:
+        usuario = exigir(conta, Permissao.EDITAR_PAINEL, Zona.CORPORATIVA)
+        if corpo.escopo != escopo:
+            raise HTTPException(
+                status_code=422, detail="o escopo do corpo não bate com o da rota"
+            )
+        try:
+            corpo.validar_contexto()
+        except ValueError as erro:
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+        motor = engine_ou_erro()
+        async with motor.begin() as conexao:
+            await telas.guardar(conexao, corpo, por=usuario.login)
+            await contas.registrar(
+                conexao, "arranjo.salvar", f"arranjo:{escopo}",
+                login=usuario.login, zona=Zona.CORPORATIVA,
+                detalhe={"cartoes": [c.tipo.value for c in corpo.cartoes]},
+            )
+        return {"escopo": escopo, "cartoes": len(corpo.cartoes)}
+
+    @rotas.delete("/api/v1/arranjos/{escopo}", tags=["arranjos"])
+    async def apagar_arranjo(escopo: str, conta=Depends(conta_atual)) -> dict:
+        """Apagar faz a cascata voltar a valer — é como se desfaz."""
+        usuario = exigir(conta, Permissao.EDITAR_PAINEL, Zona.CORPORATIVA)
+        motor = engine_ou_erro()
+        async with motor.begin() as conexao:
+            existia = await telas.remover(conexao, escopo)
+            await contas.registrar(
+                conexao, "arranjo.apagar", f"arranjo:{escopo}",
+                login=usuario.login, zona=Zona.CORPORATIVA,
+            )
+        return {"removido": existia}
 
     # --------------------------- administração ---------------------------
 

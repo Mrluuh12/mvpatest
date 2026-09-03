@@ -132,7 +132,14 @@ a:hover{text-decoration:underline}
 .no.n2{padding-left:20px}
 .no.n3{padding-left:32px}
 .folha{display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;
-  padding:5px 8px 5px 44px;border-radius:5px}
+  padding:5px 8px 5px 40px;border-radius:5px;border-left:3px solid transparent;
+  margin-left:4px}
+/* Contorno pelo estado: verde responde, vermelho não responde, âmbar incerto.
+   Cinza claro é "nem sondado" — que é diferente de "sondado e mudo". */
+.folha.e-ok{border-left-color:var(--verde)}
+.folha.e-mau{border-left-color:var(--vermelho)}
+.folha.e-parcial{border-left-color:var(--ambar)}
+.folha.e-nd{border-left-color:var(--linha-forte)}
 .folha:hover{background:var(--cartao-2)}
 .folha[aria-current="true"]{background:var(--azul-claro)}
 .folha .pt{margin-top:5px}
@@ -244,8 +251,14 @@ a:hover{text-decoration:underline}
   padding:7px 16px;border-radius:6px;font-weight:700;font-size:13px}
 .tronco{height:16px;border-bottom:1px solid var(--linha-forte);width:92%;margin:0 auto}
 .pecas{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;padding-top:16px}
-.peca{position:relative;width:152px;border:1px solid var(--linha-forte);border-radius:7px;
+.peca{position:relative;width:152px;border:2px solid var(--linha-forte);border-radius:7px;
   background:var(--cartao);overflow:hidden}
+/* A borda inteira diz o estado; a barra interna à esquerda diz a zona. São
+   dois canais diferentes de propósito — misturá-los perderia uma informação. */
+.peca.e-ok{border-color:var(--verde)}
+.peca.e-mau{border-color:var(--vermelho)}
+.peca.e-parcial{border-color:var(--ambar)}
+.peca.e-nd{border-color:var(--linha-forte);border-style:dashed}
 .peca::before{content:"";position:absolute;top:-16px;left:50%;width:1px;height:16px;
   background:var(--linha-forte)}
 .peca .foto{width:100%;height:64px;object-fit:cover;display:block;background:var(--cartao-2);
@@ -342,3 +355,43 @@ td.nulo{color:var(--apagado)}
 .usuario-menu{display:flex;flex-direction:column;align-items:flex-start;line-height:1.2}
 .usuario-menu b{font-size:12.5px}
 .usuario-menu span{font-size:10px;color:var(--barra-fraco)}
+
+/* ======================= tela dirigida por arranjo ======================= */
+/* Quatro colunas fixas e cartões que ocupam de uma a quatro. É o suficiente
+   para todos os arranjos que fazem sentido e evita a alternativa — posições
+   absolutas — que quebra em qualquer largura de tela que não a sua. */
+.tela{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;
+      align-items:start;margin-bottom:14px}
+.vaga{min-width:0;position:relative}
+.g1c{grid-column:span 1}.g2c{grid-column:span 2}
+.g3c{grid-column:span 3}.g4c{grid-column:span 4}
+@media(max-width:1320px){.g3c{grid-column:span 4}
+  .tela{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .g2c,.g4c{grid-column:span 2}}
+@media(max-width:820px){.tela{grid-template-columns:minmax(0,1fr)}
+  .g1c,.g2c,.g3c,.g4c{grid-column:span 1}}
+
+.barra-tela{display:flex;align-items:center;gap:10px;margin-bottom:12px;
+  padding:8px 12px;border:1px dashed var(--linha);border-radius:8px;
+  background:#F7F9FC;font-size:12px;color:var(--tinta2)}
+.barra-tela b{color:var(--barra)}
+.barra-tela .bt{margin-left:auto}
+.barra-tela .bt+.bt{margin-left:0}
+
+.vaga.editando .cx{outline:1px dashed var(--azul);outline-offset:2px}
+.ferramentas{position:absolute;top:-11px;right:6px;z-index:3;display:flex;gap:2px}
+.ferramentas button{border:1px solid var(--linha);background:#fff;color:var(--tinta2);
+  border-radius:6px;padding:2px 7px;font-size:11px;line-height:1.5;cursor:pointer}
+.ferramentas button:hover{background:var(--azul);color:#fff;border-color:var(--azul)}
+
+.clicavel{cursor:pointer}
+tr.clicavel:hover{background:#F2F6FC}
+.peca.clicavel:hover{box-shadow:0 2px 10px rgba(14,42,77,.16)}
+
+.foto-grande{width:100%;height:190px;border-radius:8px;object-fit:cover;
+  border:1px solid var(--linha);display:block}
+.foto-grande.vazia{display:grid;place-items:center;border-style:dashed;
+  color:var(--tinta2);font-size:12px;cursor:pointer;background:#F7F9FC}
+.aviso-inline{margin:10px 0 0;padding:8px 10px;border-radius:6px;
+  background:#FFF6E5;border:1px solid #F0D08A;color:#6B4E12;font-size:12px}
+.modal.largo{max-width:640px}

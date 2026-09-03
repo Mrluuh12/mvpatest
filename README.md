@@ -268,6 +268,50 @@ A aba **Coleta** mostra a plataforma se observando. Repare na distinção que el
 preserva: um módulo com muitas falhas de alvo *e* carimbo de última coleta
 presente funcionou — foram os equipamentos que não responderam.
 
+### Ficha do dispositivo
+
+Clicar num componente — na tabela ou no diagrama — abre a ficha daquele
+aparelho: identidade, telemetria, imagem, mudanças e histórico de alterações.
+As mudanças mostradas são **daquele dispositivo**, não do ativo inteiro: numa
+ficha, ver as oscilações dos outros onze aparelhos do mesmo caminhão faria
+parecer que foi ele que oscilou.
+
+O cartão de telemetria só reserva linha de RSSI para papéis que têm rádio. Num
+conversor CAN, "RSSI: aguardando coletor" seria uma promessa que nunca se
+cumpre.
+
+### Telas configuráveis
+
+Cada tela — de ativo e de dispositivo — é um **arranjo**: quais cartões
+aparecem, com que nome, em que ordem e com que largura. Quem tem
+`editar_painel` personaliza pela própria tela: acrescentar, remover, renomear,
+reordenar e alargar, com tudo em memória até salvar. Cancelar descarta.
+
+O arranjo se resolve pela mesma cascata das imagens, e por ter a mesma razão:
+
+| Escopo | Alcance |
+|---|---|
+| `disp:<chave>` / `ativo:<id>` | aquele aparelho / aquela máquina |
+| `papel:<papel>` / `frota:<sigla>` | todos do mesmo papel / da mesma frota |
+| `padrao_dispositivo` / `padrao_ativo` | onde não houver arranjo mais específico |
+
+**Um arranjo por papel cobre os 708 dispositivos.** Ao salvar, a plataforma
+pergunta para onde o arranjo vale — e a barra da tela sempre diz de onde o
+arranjo em uso veio, porque sem isso ninguém sabe se está mexendo na tela
+daquela máquina ou na de toda a frota. Apagar um arranjo faz a cascata voltar
+a valer: é assim que se desfaz um experimento, sem restaurar backup.
+
+O **catálogo de cartões é fechado**, pela mesma razão do dicionário canônico de
+métricas: se cada tela puder inventar um tipo, em dois anos são vinte telas que
+não se parecem e ninguém mantém. A liberdade é de *compor*, não de improvisar.
+Um cartão só é oferecido no contexto em que faz sentido — `componentes` não
+entra numa ficha de dispositivo, porque um rádio não tem aparelhos embarcados,
+e o arranjo que tentar isso é recusado antes de chegar ao banco.
+
+Um teste lê o `app.js` e falha se um tipo do catálogo não tiver desenho
+correspondente: sem ele, acrescentar um cartão no servidor entregaria ao
+usuário um buraco onde deveria haver conteúdo.
+
 ## Contas, autorização e auditoria
 
 A primeira conta é criada por quem instala. **Não há senha padrão embutida** —

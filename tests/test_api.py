@@ -122,3 +122,41 @@ class TestShell:
         """Console limpo importa numa ferramenta que fica aberta o dia todo."""
         html = cliente.get("/").text
         assert 'rel="icon"' in html, "sem favicon, todo carregamento gera um 404"
+
+
+class TestArranjosSemBanco:
+    """Instalação recém-aberta, ainda sem banco.
+
+    É o estado em que a plataforma passa os primeiros minutos de vida, e é
+    onde uma tela que depende de configuração salva quebraria. Aqui ela tem de
+    funcionar com os padrões embutidos.
+    """
+
+    def test_catalogo_e_a_lista_fechada(self, cliente: TestClient) -> None:
+        tipos = {c["tipo"] for c in cliente.get("/api/v1/catalogo").json()}
+        assert {"resumo", "telemetria", "identidade", "texto"} <= tipos
+
+    def test_cartao_indisponivel_vem_com_motivo(self, cliente: TestClient) -> None:
+        for c in cliente.get("/api/v1/catalogo").json():
+            if not c["disponivel"]:
+                assert c["motivo"], f"{c['tipo']} apagado sem dizer por quê"
+
+    def test_arranjo_cai_no_padrao_embutido(self, cliente: TestClient) -> None:
+        r = cliente.get("/api/v1/arranjo", params={"contexto": "ativo", "chave": "CA-1"})
+        assert r.status_code == 200
+        assert r.json()["origem"] == "embutido"
+        assert r.json()["arranjo"]["cartoes"], "tela sem cartão nenhum"
+
+    def test_contexto_invalido_e_recusado(self, cliente: TestClient) -> None:
+        r = cliente.get("/api/v1/arranjo", params={"contexto": "planeta", "chave": "X"})
+        assert r.status_code == 422
+
+    def test_salvar_sem_banco_nao_finge_que_salvou(self, cliente: TestClient) -> None:
+        """Sem banco não há onde guardar. Responder 200 faria a interface
+        mostrar sucesso e perder a edição no primeiro recarregamento."""
+        r = cliente.put(
+            "/api/v1/arranjos/frota:CA",
+            json={"escopo": "frota:CA", "contexto": "ativo",
+                  "cartoes": [{"tipo": "resumo"}]},
+        )
+        assert r.status_code >= 400

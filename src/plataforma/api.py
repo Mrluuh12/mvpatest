@@ -167,18 +167,24 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
     )
 
     @app.get("/api/v1/saude", tags=["plataforma"])
-    def saude() -> dict:
+    async def saude() -> dict:
         """Saúde da própria plataforma — não dos equipamentos.
 
         Módulo morto faz as métricas pararem, e ausência de dado ruim é
         indistinguível de ausência de problema. Por isso a plataforma se
         observa antes de observar qualquer outra coisa.
+
+        ``exige_login`` **consulta** o banco em vez de ler o atalho em memória.
+        O atalho começa falso a cada processo novo, e é esta resposta que faz a
+        interface decidir se mostra a porta de entrada: lendo o atalho, a
+        primeira carga depois de um reinício entrava anônima numa instalação
+        que já tem contas.
         """
         resumo = fonte.repo.resumo()
         return {
             "versao": VERSAO,
             "inventario_carregado": bool(resumo.get("dispositivos")),
-            "exige_login": fonte._tem_contas,
+            "exige_login": await fonte.tem_contas(),
             "carregado_em": fonte.carregado_em,
             "erro_de_recarga": fonte.erro,
             "resumo": resumo,
@@ -292,17 +298,27 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         )
 
     @app.get("/api/v1/transicoes", tags=["inventario"])
-    async def transicoes(ativo_id: str | None = None, limite: int = 20) -> list[dict]:
-        """Mudanças de estado observadas — o histórico que existe hoje."""
+    async def transicoes(
+        ativo_id: str | None = None, chave: str | None = None, limite: int = 20
+    ) -> list[dict]:
+        """Mudanças de estado observadas — o histórico que existe hoje.
+
+        ``chave`` restringe a um dispositivo; ``ativo_id`` abre para todos os
+        dispositivos do ativo. Na ficha de um aparelho, mostrar as mudanças dos
+        outros onze do mesmo caminhão faria parecer que foi ele que oscilou.
+        """
         if fonte._engine is None:
             return []
         from .db.coleta import ultimas_transicoes
 
-        chaves = (
-            [d.chave for d in fonte.repo.dispositivos(ativo_id)] if ativo_id else None
-        )
-        if ativo_id and not chaves:
-            return []
+        if chave:
+            chaves = [chave]
+        elif ativo_id:
+            chaves = [d.chave for d in fonte.repo.dispositivos(ativo_id)]
+            if not chaves:
+                return []
+        else:
+            chaves = None
         async with fonte._engine.connect() as conexao:
             brutas = await ultimas_transicoes(conexao, chaves, limite)
         nomes = {d.chave: d.nome for d in fonte.repo.dispositivos()}
