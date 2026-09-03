@@ -52,6 +52,34 @@
     ERB: "Estações Base", ERM: "Estações Móveis", GST: "Gate Station",
     MA: "Motoniveladoras", TN: "Tanques",
   };
+  /** Como cada métrica canônica se apresenta: rótulo legível, unidade e
+   *  quantas casas fazem sentido. -76,6 dBm é leitura; -76,63194 é ruído. */
+  const METRICA = {
+    rf_snr_db: ["SNR", "dB", 1], rf_rssi_dbm: ["Sinal recebido", "dBm", 1],
+    rf_ruido_dbm: ["Ruído", "dBm", 1], rf_potencia_tx_dbm: ["Potência TX", "dBm", 0],
+    rf_capacidade_estimada_mbps: ["Taxa do enlace", "Mbps", 0],
+    rf_clientes_associados: ["Clientes", "", 0],
+    malha_peers_ativos: ["Vizinhos ativos", "", 0],
+    malha_custo_link: ["Custo do enlace", "", 0],
+    disp_temperatura_c: ["Temperatura", "°C", 1], disp_cpu_pct: ["CPU", "%", 0],
+    disp_bateria_pct: ["Bateria", "%", 0], disp_memoria_pct: ["Memória", "%", 0],
+    ativo_uptime_s: ["Ligado há", "d", 0],
+    servico_disponivel: ["Sessão BC API", "", 0],
+    servico_tempo_resposta_ms: ["Resposta da API", "ms", 1],
+    geo_velocidade_kmh: ["Velocidade", "km/h", 0], geo_altitude_m: ["Altitude", "m", 0],
+    geo_latitude: ["Latitude", "°", 5], geo_longitude: ["Longitude", "°", 5],
+  };
+
+  /** Como o número foi obtido, em português. Um SNR que é o pior entre seis
+   *  vizinhos precisa dizer isso, ou é lido como medida direta. */
+  const AGREGACAO = {
+    pior_entre_vizinhos: "pior entre os vizinhos",
+    melhor_entre_vizinhos: "melhor entre os vizinhos",
+    pior_entre_radios: "pior entre os rádios",
+    maior_entre_radios: "maior entre os rádios",
+    soma_dos_radios: "soma dos rádios",
+  };
+
   const ZONA_SELO = { corporativa: "neutro", ot_nivel3: "ambar", ot_nivel2: "vermelho" };
 
   const S = {
@@ -59,7 +87,7 @@
     ativos: [], sinais: [], achados: {}, resumo: {}, saude: {}, transicoes: [],
     sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
-    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false,
+    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [],
   };
 
   /* três situações distintas, nunca duas */
@@ -548,22 +576,44 @@
   const COM_RF = new Set(["radio_mesh", "radio_ptp", "radio_ptmp", "gateway_pneu", "hub_ptx"]);
 
   function cxTelemetriaDisp(c, d) {
-    const semColetor = (fam) => {
-      const s = S.sinais.find((x) => x.familia === fam);
-      return s && !s.disponivel ? s.motivo : null;
-    };
     const st = situacao(d);
-    const linha = (i, r, v, m) => `<div class="l">${i}${r}
-      ${v !== null && v !== undefined ? `<span class="v">${esc(v)}</span>`
-        : `<span class="v nulo">${esc(m || "—")}</span>`}</div>`;
-    return `<section class="cx"><header><h2>${tit(c, "Telemetria")}</h2></header>
+    const linha = (icone, rotulo, valor, nota, morno) => `<div class="l">${icone}${rotulo}
+      ${valor !== null && valor !== undefined
+        ? `<span class="v">${esc(valor)}${nota ? ` <i class="nota">${esc(nota)}</i>` : ""}</span>`
+        : `<span class="v nulo">${esc(morno || "—")}</span>`}</div>`;
+
+    // Alcance vem do ICMP e mora no estado; o resto vem dos módulos e mora
+    // nas leituras. São origens diferentes e o cartão não finge que não.
+    const base = [
+      linha(ico.raio, "Estado", st.txt),
+      linha(ico.relogio, "Latência",
+        d.latencia_ms == null ? null : d.latencia_ms.toFixed(2) + " ms", "", "sem resposta"),
+      linha(ico.onda, "Perda", d.perda_pct == null ? null : d.perda_pct.toFixed(0) + "%"),
+    ];
+
+    const lidas = (S.leituras || [])
+      .filter((l) => METRICA[l.metrica])
+      .map((l) => {
+        const [rotulo, unidade, casas] = METRICA[l.metrica];
+        if (l.metrica === "servico_disponivel") {
+          return linha(ico.escudo, rotulo, l.valor ? "abre" : "não abre");
+        }
+        const bruto = l.metrica === "ativo_uptime_s" ? l.valor / 86400 : l.valor;
+        const texto = `${bruto.toFixed(casas).replace(".", ",")}${unidade ? " " + unidade : ""}`;
+        return linha(ico.caixa, rotulo, texto, AGREGACAO[l.rotulos?.agregacao] || "");
+      });
+
+    const semColetor = COM_RF.has(d.papel) && !lidas.length
+      ? (S.sinais.find((x) => x.familia === "rf") || {}).motivo : null;
+
+    return `<section class="cx"><header><h2>${tit(c, "Medições")}</h2>
+      ${lidas.length ? `<span class="dir">${lidas.length} leituras</span>` : ""}</header>
       <div class="conteudo"><div class="telem">
-        ${linha(ico.raio, "Estado", st.txt)}
-        ${linha(ico.relogio, "Latência",
-          d.latencia_ms == null ? null : d.latencia_ms.toFixed(2) + " ms", "sem resposta")}
-        ${linha(ico.onda, "Perda", d.perda_pct == null ? null : d.perda_pct.toFixed(0) + "%")}
-        ${COM_RF.has(d.papel) ? linha(ico.caixa, "RSSI", null, semColetor("rf")) : ""}
-        ${linha(ico.relogio, "Última leitura", d.visto_em ? hora(d.visto_em) : null, "nunca sondado")}
+        ${base.join("")}
+        ${lidas.join("")}
+        ${semColetor ? linha(ico.onda, "RSSI", null, "", semColetor) : ""}
+        ${linha(ico.relogio, "Última leitura", d.visto_em ? hora(d.visto_em) : null,
+          "", "nunca sondado")}
       </div></div></section>`;
   }
 
@@ -830,6 +880,8 @@
     if (d) {
       await carregarArranjo("dispositivo", d.chave, d.papel);
       await carregarAuditoria(`disp:${d.chave}`);
+      S.leituras = await api(
+        `/api/v1/leituras?sujeito=${encodeURIComponent(d.chave)}`).catch(() => []);
       pintarDispositivo(f, d);
       return;
     }

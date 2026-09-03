@@ -327,6 +327,79 @@ Um teste lê o `app.js` e falha se um tipo do catálogo não tiver desenho
 correspondente: sem ele, acrescentar um cartão no servidor entregaria ao
 usuário um buraco onde deveria haver conteúdo.
 
+## Módulo Rajant (marco M2)
+
+**Ele não fala com rádio nenhum.** O exportador Prometheus do usuário já faz
+isso — 98 métricas tiradas da BC API, com correções documentadas contra o BCE
+User Guide. Reimplementar aquilo jogaria fora conhecimento caro e criaria uma
+segunda verdade sobre os mesmos equipamentos.
+
+O que faltava não era coleta de rádio: era **junção**. O Prometheus sabe que o
+BC `CA-1001` está a 47 °C; só a plataforma sabe que ele é o rádio de um
+caminhão de britagem primária, em ot_nivel3, com sete peças embarcadas.
+
+```
+PLATAFORMA_PROMETHEUS=http://prometheus:9090 \
+  python -m plataforma.coletor --zona corporativa --uma-vez --modulo rajant
+```
+
+Sem essa variável o módulo não carrega: módulo que falha por não estar
+configurado ensina a ignorar módulo que falha de verdade.
+
+### A agregação acontece no PromQL
+
+São ~254 séries por rádio (52 por BC, 75 por interface, 108 por vizinho, 18
+por porta) — cerca de **38 mil** no parque de 149. Trazer isso para dentro
+seria reimplementar o Prometheus pior do que ele. As 18 consultas já voltam
+agregadas por equipamento: **18 valores por rádio em vez de 254**. O detalhe
+por vizinho fica onde já está e é bom.
+
+### Três armadilhas que o dado real revelou
+
+**O RSSI do Rajant não é dBm.** É escala relativa medida acima do piso de
+ruído; o dBm de verdade é `State.Peer.signal`. O próprio exportador documenta
+a confusão e o estrago que ela fez lá. Por isso `rf_rssi_dbm` vem de
+`rajant_peer_sinal_dbm`, e `rajant_peer_rssi` fica de fora até existir uma
+métrica canônica com a escala certa.
+
+**Um BreadCrumb tem um IPv4 por rádio.** O mesmo equipamento aparece em várias
+séries, com IPs diferentes, e todas resolvem para o mesmo dispositivo do
+inventário — o que fazia o Postgres recusar o lote inteiro (*cannot affect row
+a second time*). O módulo consolida com critério declarado: somas somam, o
+resto fica com o pior caso, porque um rádio bom não compensa o outro estar
+surdo.
+
+**`rajant_online` não é `ativo_alcancavel`.** Quem responde por
+disponibilidade é o ICMP; duas fontes gravando a mesma linha de estado dariam
+last-write-wins, e o valor na tela dependeria de qual módulo rodou por último.
+São perguntas diferentes — "o endereço responde" e "a sessão BC API abre" — e
+um rádio que atende ping e recusa a API é um achado, não um empate. Vai para
+`servico_disponivel`.
+
+### Do vizinho publica-se o pior, e diz-se que é o pior
+
+Um rádio de malha não tem "o SNR": tem N, um por vizinho. A média esconderia
+justamente o enlace prestes a cair. Cada observação agregada carrega o rótulo
+`agregacao`, e a ficha o exibe em português — *pior entre os vizinhos* — porque
+`rf_snr_db` num PtP é o enlace e aqui é o pior de N.
+
+### Onde a leitura para
+
+A tabela `leitura` guarda **a última** leitura de cada par (sujeito, métrica).
+Não é série histórica e não quer ser: responde "quanto está agora", que é o
+que a ficha precisa. "Como estava ontem às 14h" continua sendo pergunta para o
+Prometheus, que guarda a série muito melhor — e duplicá-la aqui criaria duas
+verdades sobre o mesmo número. O tamanho é equipamentos × métricas,
+substituído a cada ciclo; não cresce com o tempo.
+
+### A tela parou de prometer
+
+`/api/v1/sinais` dizia "aguarda o módulo Rajant" para sempre, mesmo depois de
+o módulo estar publicando. Promessa desatualizada é pior que promessa: ensina
+a não confiar na tela. Agora a família é apurada do banco — disponível quando
+existe leitura dela —, e só as que a linha de base dá como ausentes são
+promovidas, para que o ICMP não perca o crédito da disponibilidade.
+
 ## Contas, autorização e auditoria
 
 A primeira conta é criada por quem instala. **Não há senha padrão embutida** —

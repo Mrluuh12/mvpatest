@@ -28,27 +28,47 @@ from .db.esquema import dispositivo, identificador
 from .db.repositorio_pg import criar_engine
 from .modulos.contrato import ResultadoColeta
 from .modulos.icmp import ModuloIcmp
+from .modulos.rajant import ModuloRajant
 from .modulos.registro import Agendador, Registro
 
 VAR_BANCO = "PLATAFORMA_BANCO"
 VAR_ZONA = "PLATAFORMA_ZONA"
+#: URL do Prometheus que o exportador Rajant alimenta. Ausente = módulo não
+#: carrega.
+VAR_PROMETHEUS = "PLATAFORMA_PROMETHEUS"
 
 
-async def alvos_do_inventario(engine: AsyncEngine, zona: Zona) -> list[dict[str, Any]]:
+async def alvos_do_inventario(
+    engine: AsyncEngine, zona: Zona, papeis: tuple[str, ...] = ()
+) -> list[dict[str, Any]]:
     """Dispositivos da zona do coletor que têm endereço IP.
 
     O filtro por zona não é conveniência: é o que impede um coletor da rede
     corporativa sondar equipamento de OT porque alguém cadastrou o IP errado.
+
+    ``papeis`` restringe ao que o módulo declara cobrir. Sem isso, um módulo
+    de rádio receberia todos os alvos da zona e reportaria como falha de
+    cobertura todo switch e toda câmera que nunca foram problema dele.
     """
     consulta = (
-        select(dispositivo.c.chave, identificador.c.valor.label("ip"))
+        select(
+            dispositivo.c.chave,
+            dispositivo.c.nome_canonico.label("nome"),
+            dispositivo.c.papel,
+            identificador.c.valor.label("ip"),
+        )
         .join(identificador, identificador.c.dispositivo_chave == dispositivo.c.chave)
         .where(identificador.c.tipo == "ip")
         .where(dispositivo.c.zona == zona.value)
     )
+    if papeis:
+        consulta = consulta.where(dispositivo.c.papel.in_(list(papeis)))
     async with engine.connect() as conexao:
         linhas = (await conexao.execute(consulta)).all()
-    return [{"chave": ln.chave, "ip": ln.ip} for ln in linhas]
+    return [
+        {"chave": ln.chave, "nome": ln.nome, "papel": ln.papel, "ip": ln.ip}
+        for ln in linhas
+    ]
 
 
 class Coletor:
@@ -61,16 +81,29 @@ class Coletor:
         self.agendador = Agendador(self.registro, self._fonte, self._escoadouro)
         self.ultimo: dict[str, dict[str, int]] = {}
 
-    async def _fonte(self, _nome: str) -> list[dict[str, Any]]:
-        return await alvos_do_inventario(self.engine, self.zona)
+    async def _fonte(self, nome: str) -> list[dict[str, Any]]:
+        papeis = (
+            self.registro.obter(nome).manifesto.papeis_alvo
+            if nome in self.registro
+            else ()
+        )
+        return await alvos_do_inventario(self.engine, self.zona, papeis)
 
     async def _escoadouro(self, nome: str, resultado: ResultadoColeta) -> None:
         async with self.engine.begin() as conexao:
             self.ultimo[nome] = await gravar_coleta(conexao, nome, resultado)
 
     def carregar_padrao(self) -> None:
-        """Carrega os módulos de M1. Por ora, um só — e é o que cobre tudo."""
+        """Carrega os módulos disponíveis para esta zona.
+
+        O Rajant só entra se houver Prometheus configurado. Carregá-lo sempre
+        faria toda instalação sem Prometheus acumular falha de um módulo que
+        ninguém pediu — e módulo que falha por não estar configurado ensina a
+        ignorar módulo que falha de verdade.
+        """
         self.registro.registrar(ModuloIcmp())
+        if url := os.environ.get(VAR_PROMETHEUS):
+            self.registro.registrar(ModuloRajant(url))
 
     async def rodar_uma_vez(self, nome: str = "icmp") -> dict[str, int]:
         await self.agendador.rodar_uma_vez(nome)
@@ -94,13 +127,13 @@ def _url(informada: str | None) -> str:
     return url
 
 
-async def _principal(url: str, zona: Zona, uma_vez: bool) -> int:
+async def _principal(url: str, zona: Zona, uma_vez: bool, modulo: str) -> int:
     engine = criar_engine(url)
     coletor = Coletor(engine, zona)
     coletor.carregar_padrao()
     try:
         if uma_vez:
-            resumo = await coletor.rodar_uma_vez()
+            resumo = await coletor.rodar_uma_vez(modulo)
             print(f"módulos: {coletor.registro.nomes}  zona: {zona.value}")
             for chave, valor in resumo.items():
                 print(f"  {chave:<16} {valor}")
@@ -123,8 +156,13 @@ def main(argv: list[str] | None = None) -> int:
         choices=[z.value for z in Zona],
     )
     p.add_argument("--uma-vez", action="store_true", help="um ciclo e sai")
+    p.add_argument(
+        "--modulo", default="icmp", help="qual módulo rodar com --uma-vez"
+    )
     args = p.parse_args(argv)
-    return asyncio.run(_principal(_url(args.banco), Zona(args.zona), args.uma_vez))
+    return asyncio.run(
+        _principal(_url(args.banco), Zona(args.zona), args.uma_vez, args.modulo)
+    )
 
 
 if __name__ == "__main__":

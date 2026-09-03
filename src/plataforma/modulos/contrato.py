@@ -85,6 +85,12 @@ class Manifesto(BaseModel):
     somente_leitura: bool = True
     zona_permitida: tuple[Zona, ...] = (Zona.CORPORATIVA,)
 
+    #: Papéis que este módulo cobre. Vazio significa "todos" — é o caso do
+    #: ICMP, que responde por qualquer coisa com endereço. Um módulo de rádio
+    #: que recebesse os 388 alvos da zona reportaria 380 falhas de cobertura a
+    #: cada ciclo: o número certo tem de ser sobre o que ele deveria alcançar.
+    papeis_alvo: tuple[str, ...] = ()
+
     @field_validator("zona_permitida")
     @classmethod
     def _zona_valida(cls, v: tuple[Zona, ...]) -> tuple[Zona, ...]:

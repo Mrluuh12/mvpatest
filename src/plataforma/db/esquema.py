@@ -172,6 +172,31 @@ transicao = Table(
 )
 
 
+#: A **última** leitura de cada métrica numérica, uma linha por
+#: (sujeito, métrica). Não é série histórica e não quer ser: guardar toda
+#: amostra de 38 mil séries seria reimplementar mal o Prometheus, que já as
+#: guarda. Isto responde "quanto está agora", que é o que a ficha do
+#: equipamento precisa; "como estava ontem às 14h" continua sendo pergunta
+#: para quem tem a série.
+#:
+#: O tamanho é limitado pelo produto de equipamentos por métricas — milhares
+#: de linhas, substituídas a cada ciclo — e não cresce com o tempo.
+leitura = Table(
+    "leitura",
+    metadata,
+    Column("sujeito", Text, primary_key=True),
+    Column("metrica", Text, primary_key=True),
+    Column("valor", Float, nullable=False),
+    Column("qualidade", String(16), nullable=False, server_default=text("'boa'")),
+    # De onde veio e como foi agregada. Um SNR que é o pior entre seis
+    # vizinhos precisa dizer isso, ou vira medida direta na cabeça de quem lê.
+    Column("rotulos", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("modulo", Text, nullable=False),
+    Column("em", DateTime(timezone=True), nullable=False),
+    Index("ix_leitura_metrica", "metrica"),
+)
+
+
 #: Saúde de cada módulo — as cinco séries obrigatórias, no seu estado atual.
 saude_modulo = Table(
     "saude_modulo",

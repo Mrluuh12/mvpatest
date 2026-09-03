@@ -59,8 +59,10 @@ class FichaAtivo(BaseModel):
     sinais: list[Sinal]
 
 
-#: Famílias do dicionário canônico e quem as alimenta. Enquanto o coletor não
-#: existe, o motivo aparece na tela — a lacuna vira informação, não mistério.
+#: O que se sabe sobre cada família **antes** de olhar o banco. É a linha de
+#: base: quando nenhuma leitura existe, o motivo aparece na tela e a lacuna
+#: vira informação, não mistério. Assim que um módulo publica de verdade, a
+#: resposta passa a vir do banco — ver `sinais()`.
 SINAIS = [
     Sinal(familia="inventario", disponivel=True),
     Sinal(familia="topologia", disponivel=True, motivo="apenas arestas embarcado_em"),
@@ -191,8 +193,44 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         }
 
     @app.get("/api/v1/sinais", response_model=list[Sinal], tags=["plataforma"])
-    def sinais() -> list[Sinal]:
-        return SINAIS
+    async def sinais() -> list[Sinal]:
+        """O que a plataforma coleta hoje — apurado, não declarado.
+
+        A lista embutida dizia "aguarda o módulo Rajant" para sempre, mesmo
+        depois de o módulo estar publicando. Promessa desatualizada é pior que
+        promessa: ensina a não confiar na tela. Agora a família é dada como
+        disponível quando existe leitura dela no banco, e o texto diz quem a
+        alimenta.
+        """
+        if fonte._engine is None:
+            return SINAIS
+        from sqlalchemy import distinct, select
+
+        from .db.esquema import leitura
+        from .dicionario import POR_NOME
+
+        async with fonte._engine.connect() as conexao:
+            linhas = (
+                await conexao.execute(select(distinct(leitura.c.metrica), leitura.c.modulo))
+            ).all()
+        quem: dict[str, set[str]] = {}
+        for nome_metrica, modulo in linhas:
+            if metrica := POR_NOME.get(nome_metrica):
+                quem.setdefault(metrica.familia.value, set()).add(modulo)
+        # Só as famílias que a linha de base dá como ausentes são promovidas.
+        # Disponibilidade já é do ICMP, e o estado dele não passa por
+        # `leitura` — promovê-la aqui creditaria ao Rajant um canal que não é
+        # dele, só porque ele publica o uptime.
+        return [
+            Sinal(
+                familia=s.familia,
+                disponivel=True,
+                motivo="módulo " + ", ".join(sorted(quem[s.familia])),
+            )
+            if (not s.disponivel and s.familia in quem)
+            else s
+            for s in SINAIS
+        ]
 
     @app.post("/api/v1/recarregar", tags=["plataforma"])
     async def recarregar() -> dict:
@@ -323,6 +361,21 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
             brutas = await ultimas_transicoes(conexao, chaves, limite)
         nomes = {d.chave: d.nome for d in fonte.repo.dispositivos()}
         return [{**t, "nome": nomes.get(t["sujeito"], t["sujeito"])} for t in brutas]
+
+    @app.get("/api/v1/leituras", tags=["plataforma"])
+    async def leituras(sujeito: str) -> list[dict]:
+        """As últimas leituras de um equipamento.
+
+        Não é série: é "quanto está agora". A pergunta sobre ontem continua
+        sendo do Prometheus, que guarda a série muito melhor do que esta
+        tabela guardaria.
+        """
+        if fonte._engine is None:
+            return []
+        from .db.coleta import leituras_de
+
+        async with fonte._engine.connect() as conexao:
+            return await leituras_de(conexao, sujeito)
 
     @app.get("/api/v1/resumo", tags=["inventario"])
     def resumo() -> dict:

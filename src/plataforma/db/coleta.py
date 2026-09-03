@@ -18,13 +18,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from plataforma.modulos.contrato import ResultadoColeta
 
-from .esquema import estado, saude_modulo, transicao
+from .esquema import estado, leitura, saude_modulo, transicao
 
 #: A partir de quantos alvos uma falha total deixa de ser coincidência.
 #: Com poucos alvos, todos caírem juntos é plausível; com dezenas, é quase
@@ -60,6 +60,79 @@ def _por_sujeito(resultado: ResultadoColeta) -> dict[str, dict[str, float]]:
     return agrupado
 
 
+#: O que já vira estado e transição — não se repete em `leitura`.
+DE_DISPONIBILIDADE = frozenset(
+    {"ativo_alcancavel", "ativo_latencia_ms", "ativo_perda_pacote_pct", "ativo_jitter_ms"}
+)
+
+
+async def _gravar_leituras(
+    conexao: AsyncConnection,
+    nome_modulo: str,
+    resultado: ResultadoColeta,
+    momento: datetime,
+) -> int:
+    """Substitui a última leitura de cada (sujeito, métrica).
+
+    Substitui, não acumula: a tabela responde "quanto está agora". Quem
+    precisa de série tem o Prometheus, que a guarda muito melhor — e
+    duplicá-la aqui só criaria duas verdades sobre o mesmo número.
+    """
+    # Um mesmo par (sujeito, métrica) duas vezes na mesma remessa faz o
+    # Postgres recusar o lote inteiro — "cannot affect row a second time".
+    # Acontece de verdade: um Rajant com três rádios publica três séries com
+    # IPs diferentes que resolvem para o mesmo equipamento. Aqui vence a
+    # última; quem deveria ter agregado é o módulo, e é lá que está o comentário.
+    unicas: dict[tuple[str, str], dict] = {}
+    for o in resultado.observacoes:
+        if o.metrica in DE_DISPONIBILIDADE:
+            continue
+        unicas[(o.sujeito, o.metrica)] = {
+            "sujeito": o.sujeito,
+            "metrica": o.metrica,
+            "valor": o.valor,
+            "qualidade": o.qualidade.value,
+            "rotulos": o.rotulos,
+            "modulo": nome_modulo,
+            "em": o.em or momento,
+        }
+    linhas = list(unicas.values())
+    if not linhas:
+        return 0
+    await conexao.execute(
+        pg_insert(leitura)
+        .values(linhas)
+        .on_conflict_do_update(
+            index_elements=["sujeito", "metrica"],
+            set_={
+                c: text(f"excluded.{c}")
+                for c in ("valor", "qualidade", "rotulos", "modulo", "em")
+            },
+        )
+    )
+    return len(linhas)
+
+
+async def leituras_de(conexao: AsyncConnection, sujeito: str) -> list[dict]:
+    """As leituras de um equipamento, para a ficha dele."""
+    linhas = (
+        await conexao.execute(
+            select(leitura).where(leitura.c.sujeito == sujeito).order_by(leitura.c.metrica)
+        )
+    ).all()
+    return [
+        {
+            "metrica": ln.metrica,
+            "valor": ln.valor,
+            "qualidade": ln.qualidade,
+            "rotulos": ln.rotulos or {},
+            "modulo": ln.modulo,
+            "em": ln.em,
+        }
+        for ln in linhas
+    ]
+
+
 async def gravar_coleta(
     conexao: AsyncConnection,
     nome_modulo: str,
@@ -75,6 +148,8 @@ async def gravar_coleta(
         linha.sujeito: linha.alcancavel
         for linha in (await conexao.execute(select(estado.c.sujeito, estado.c.alcancavel))).all()
     }
+
+    await _gravar_leituras(conexao, nome_modulo, resultado, momento)
 
     linhas_estado = []
     mudancas = []
