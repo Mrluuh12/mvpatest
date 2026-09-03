@@ -22,8 +22,8 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -171,6 +171,72 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
     async def recarregar() -> dict:
         await fonte.recarregar()
         return {"carregado_em": fonte.carregado_em, "erro": fonte.erro}
+
+    # ---------------- imagens ----------------
+
+    @app.post("/api/v1/imagens", tags=["imagens"])
+    async def enviar_imagem(
+        sujeito: str = Form(
+            ...,
+            description="disp:<chave> | papel:<papel> | ativo:<id> | frota:<sigla>",
+        ),
+        arquivo: UploadFile = File(...),  # noqa: B008 - assim o FastAPI declara upload
+    ) -> dict:
+        """Associa uma imagem a um sujeito.
+
+        O sujeito é hierárquico: uma foto por **papel** cobre todos os
+        dispositivos daquele papel, e uma por **frota** cobre todos os ativos
+        dela. Foto específica, quando existir, tem precedência.
+        """
+        if fonte._engine is None:
+            raise HTTPException(status_code=503, detail="banco não configurado")
+        from .db.imagens import ImagemRecusada, guardar
+
+        conteudo = await arquivo.read()
+        try:
+            async with fonte._engine.begin() as conexao:
+                gravada = await guardar(
+                    conexao, sujeito, conteudo, arquivo.content_type or ""
+                )
+        except ImagemRecusada as erro:
+            # 422 com o motivo: recusa que não explica custa uma tarde de alguém.
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+        await fonte.recarregar()
+        return {"sujeito": gravada.sujeito, "arquivo": gravada.arquivo, "bytes": gravada.bytes}
+
+    @app.delete("/api/v1/imagens/{sujeito:path}", tags=["imagens"])
+    async def remover_imagem(sujeito: str) -> dict:
+        if fonte._engine is None:
+            raise HTTPException(status_code=503, detail="banco não configurado")
+        from .db.imagens import remover
+
+        async with fonte._engine.begin() as conexao:
+            existia = await remover(conexao, sujeito)
+        await fonte.recarregar()
+        return {"removida": existia}
+
+    @app.get("/imagens/{arquivo}", include_in_schema=False)
+    async def servir_imagem(arquivo: str) -> Response:
+        """Serve o arquivo, com o tipo que **nós** registramos.
+
+        Confiar no cabeçalho de quem enviou seria servir conteúdo com tipo
+        enganoso; e como só se acha pelo nome registrado no banco, não há
+        travessia de caminho a explorar.
+        """
+        if fonte._engine is None:
+            raise HTTPException(status_code=404, detail="sem imagens")
+        from .db.imagens import buscar
+
+        async with fonte._engine.connect() as conexao:
+            achado = await buscar(conexao, arquivo)
+        if achado is None:
+            raise HTTPException(status_code=404, detail="imagem não encontrada")
+        caminho, tipo = achado
+        return Response(
+            content=caminho.read_bytes(),
+            media_type=tipo,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.get("/api/v1/resumo", tags=["inventario"])
     def resumo() -> dict:

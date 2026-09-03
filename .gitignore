@@ -7,3 +7,7 @@ build/
 dist/
 .venv/
 inventario.json
+
+# Imagens enviadas são dado de execução, não código. O diretório é configurável
+# por PLATAFORMA_IMAGENS e deve ser incluído no backup, não no repositório.
+dados/

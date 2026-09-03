@@ -184,3 +184,27 @@ saude_modulo = Table(
     Column("rejeitadas", Integer, nullable=False, server_default=text("0")),
     Column("atualizado_em", DateTime(timezone=True), nullable=False),
 )
+
+
+#: Imagem associada a um sujeito. O sujeito é hierárquico de propósito:
+#:
+#:   disp:<chave>   uma foto daquele aparelho específico
+#:   papel:<papel>  vale para todos os dispositivos daquele papel
+#:   ativo:<id>     a foto daquela máquina
+#:   frota:<CA>     vale para toda a frota
+#:
+#: A cascata é o que torna isto prático: subir 17 fotos, uma por papel, cobre
+#: os 708 dispositivos. Subir uma por frota cobre os 145 ativos. Foto
+#: específica, quando existir, tem precedência.
+imagem = Table(
+    "imagem",
+    metadata,
+    Column("sujeito", Text, primary_key=True),
+    Column("arquivo", Text, nullable=False),
+    Column("tipo", String(32), nullable=False),
+    Column("bytes", Integer, nullable=False),
+    Column("largura", Integer),
+    Column("altura", Integer),
+    Column("enviado_em", DateTime(timezone=True), nullable=False),
+    Column("enviado_por", Text),
+)

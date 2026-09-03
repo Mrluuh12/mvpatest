@@ -40,6 +40,9 @@ class DispositivoLido(BaseModel):
     qualidade: str | None = None
     visto_em: datetime | None = None
 
+    #: Arquivo de imagem resolvido pela cascata (específica > por papel).
+    imagem: str | None = None
+
 
 class AtivoLido(BaseModel):
     ativo_id: str
@@ -47,6 +50,7 @@ class AtivoLido(BaseModel):
     numero: str
     funcao_negocio: str
     dispositivos: list[str] = []
+    imagem: str | None = None
 
 
 class Achados(BaseModel):

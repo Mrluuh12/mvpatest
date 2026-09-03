@@ -1,317 +1,425 @@
-/* Interface da plataforma.
+/* Interface da plataforma. Sem etapa de build: a barreira para alguém da
+ * equipe abrir e corrigir precisa ser baixa.
  *
- * Sem etapa de build, de propósito: a barreira para alguém da equipe abrir e
- * corrigir precisa ser baixa. Migrar para um framework depois é local.
- *
- * A regra que atravessa este arquivo: a tela nunca inventa número. Quando não
- * há coletor, ela diz *por que* não há — lendo /api/v1/sinais — e quando um
- * dispositivo não foi sondado, isso é visualmente diferente de "sondado e não
- * respondeu". Traço mudo confunde; zero mente.
- */
+ * Regra que atravessa o arquivo: a tela não inventa número. Onde não há
+ * medição, aparece travessão — nunca zero. */
 (() => {
   "use strict";
 
-  const api = async (rota) => {
-    const r = await fetch(rota);
-    if (!r.ok) throw new Error(`${rota}: ${r.status}`);
+  const $ = (id) => document.getElementById(id);
+  const api = async (rota, opcoes) => {
+    const r = await fetch(rota, opcoes);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `${rota}: ${r.status}`);
     return r.json();
   };
-  const esc = (s) =>
-    String(s ?? "").replace(/[&<>"]/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-  const NOME_PAPEL = {
-    radio_mesh: "rádio malha", radio_ptp: "rádio PtP", radio_ptmp: "rádio PtMP",
-    ihm_bordo: "IHM de bordo", hub_ptx: "hub PTX", gateway_pneu: "gateway pneu",
-    gps: "GPS", endpoint_imx: "endpoint IMX", plc: "CLP", conversor_can: "conversor CAN",
-    sensor_peso: "sensor de peso", roteador: "roteador", switch: "switch",
-    camera: "câmera", ups: "UPS", servidor: "servidor", periferico: "periférico",
-    desconhecido: "não reconhecido",
+  const PAPEL = {
+    radio_mesh: "Rádio malha", radio_ptp: "Rádio PtP", radio_ptmp: "Rádio PtMP",
+    ihm_bordo: "IHM de bordo", hub_ptx: "Hub PTX", gateway_pneu: "Gateway pneu",
+    gps: "GPS", endpoint_imx: "Endpoint IMX", plc: "CLP", conversor_can: "Conversor CAN",
+    sensor_peso: "Sensor de peso", roteador: "Roteador", switch: "Switch",
+    camera: "Câmera", ups: "UPS", servidor: "Servidor", periferico: "Periférico",
+    desconhecido: "Não reconhecido",
   };
-  const NOME_FROTA = {
+  const FROTA = {
     CA: "Caminhões", EH: "Escavadeiras", PF: "Perfuratrizes", PA: "Pás carregadeiras",
     TT: "Tratores de esteira", CP: "Comboio", ERB: "Estações base", ERM: "Estações móveis",
     GST: "Gate station", MA: "Motoniveladoras", TN: "Tanques",
   };
-  const SELO_ZONA = { corporativa: "neutro", ot_nivel3: "warn", ot_nivel2: "crit" };
+  const CLASSE_ZONA = { corporativa: "neutro", ot_nivel3: "ambar", ot_nivel2: "vermelho" };
 
-  const estado = {
-    ativos: [], sinais: [], achados: {}, resumo: {},
-    selecionado: null, filtro: "", abertos: new Set(["CA"]), secao: "ativos",
-    fichas: new Map(),
+  const S = {
+    ativos: [], sinais: [], achados: {}, resumo: {}, saude: {},
+    sel: null, filtro: "", abertos: new Set(["CA"]), aba: "ativo", fichas: new Map(),
   };
 
-  /* -------- estado de um dispositivo: três situações, não duas ---------- */
-  function situacao(d) {
+  /* -------- três situações distintas, nunca duas ------------------------- */
+  const situacao = (d) => {
     if (d.alcancavel === null || d.alcancavel === undefined)
-      return { classe: "", selo: "neutro", texto: "não sondado" };
-    if (d.alcancavel)
-      return { classe: "ok", selo: "good", texto: "responde" };
-    return {
-      classe: d.qualidade === "incerta" ? "parcial" : "mau",
-      selo: d.qualidade === "incerta" ? "warn" : "crit",
-      texto: d.qualidade === "incerta" ? "sem resposta (incerto)" : "sem resposta",
-    };
-  }
+      return { cls: "", selo: "neutro", txt: "não sondado", curto: "não sondado" };
+    if (d.alcancavel) return { cls: "ok", selo: "verde", txt: "responde", curto: "responde" };
+    return d.qualidade === "incerta"
+      ? { cls: "parcial", selo: "ambar", txt: "sem resposta · incerto", curto: "sem resposta" }
+      : { cls: "mau", selo: "vermelho", txt: "sem resposta", curto: "sem resposta" };
+  };
 
-  function pontoDoAtivo(ficha) {
+  const contar = (ds) => {
+    const sond = ds.filter((d) => d.alcancavel !== null && d.alcancavel !== undefined);
+    const viv = sond.filter((d) => d.alcancavel).length;
+    return { total: ds.length, sondados: sond.length, vivos: viv, mudos: sond.length - viv,
+             fora: ds.length - sond.length };
+  };
+  const bolinha = (ficha) => {
     if (!ficha) return "";
-    const sondados = ficha.dispositivos.filter((d) => d.alcancavel !== null);
-    if (!sondados.length) return "";
-    const vivos = sondados.filter((d) => d.alcancavel).length;
-    if (vivos === sondados.length) return "ok";
-    return vivos === 0 ? "mau" : "parcial";
+    const c = contar(ficha.dispositivos);
+    if (!c.sondados) return "";
+    return c.vivos === c.sondados ? "ok" : c.vivos === 0 ? "mau" : "parcial";
+  };
+
+  const foto = (arquivo) => (arquivo ? `/imagens/${encodeURIComponent(arquivo)}` : null);
+
+  /* ============================ envio de imagem ========================== */
+  const seletor = $("seletor");
+  let aoEscolher = null;
+  seletor.addEventListener("change", async () => {
+    const arq = seletor.files[0];
+    if (arq && aoEscolher) await aoEscolher(arq);
+    seletor.value = "";
+  });
+
+  function pedirArquivo(sujeito, depois) {
+    aoEscolher = async (arq) => {
+      const corpo = new FormData();
+      corpo.append("sujeito", sujeito);
+      corpo.append("arquivo", arq);
+      try {
+        await api("/api/v1/imagens", { method: "POST", body: corpo });
+        S.fichas.clear();
+        await atualizar();
+        if (depois) depois();
+      } catch (e) { alerta("Não foi possível enviar", e.message); }
+    };
+    seletor.click();
   }
 
-  /* ---------------------------- cabeçalho ------------------------------- */
+  function fecharModal() { $("modal").innerHTML = ""; }
+
+  function alerta(titulo, texto) {
+    $("modal").innerHTML = `<div class="veu" data-fechar><div class="modal">
+      <h3>${esc(titulo)}</h3><div class="corpo"><p>${esc(texto)}</p></div>
+      <div class="rodape"><button class="botao" data-fechar>Fechar</button></div></div></div>`;
+  }
+
+  /** Escolha de abrangência — é o que evita subir 708 fotos. */
+  function escolherAbrangencia(d) {
+    $("modal").innerHTML = `<div class="veu" data-fechar><div class="modal">
+      <h3>Imagem do dispositivo</h3>
+      <div class="corpo"><div class="escolha">
+        <button data-sujeito="disp:${esc(d.chave)}">
+          <b>Somente este aparelho</b><span>${esc(d.nome)}</span></button>
+        <button data-sujeito="papel:${esc(d.papel)}">
+          <b>Todos os “${esc(PAPEL[d.papel] || d.papel)}”</b>
+          <span>vale para todo dispositivo com este papel</span></button>
+      </div></div>
+      <div class="rodape"><button class="botao" data-fechar>Cancelar</button></div>
+    </div></div>`;
+  }
+
+  function escolherAbrangenciaAtivo(a) {
+    $("modal").innerHTML = `<div class="veu" data-fechar><div class="modal">
+      <h3>Imagem do ativo</h3>
+      <div class="corpo"><div class="escolha">
+        <button data-sujeito="ativo:${esc(a.ativo_id)}">
+          <b>Somente ${esc(a.ativo_id)}</b><span>esta máquina</span></button>
+        <button data-sujeito="frota:${esc(a.frota)}">
+          <b>Toda a frota “${esc(FROTA[a.frota] || a.frota)}”</b>
+          <span>vale para todos os ativos da frota</span></button>
+      </div></div>
+      <div class="rodape"><button class="botao" data-fechar>Cancelar</button></div>
+    </div></div>`;
+  }
+
+  $("modal").addEventListener("click", (e) => {
+    if (e.target.dataset.fechar !== undefined) { fecharModal(); return; }
+    const b = e.target.closest("[data-sujeito]");
+    if (b) { const s = b.dataset.sujeito; fecharModal(); pedirArquivo(s); }
+  });
+
+  /* ============================== topo =================================== */
   function pintarTopo() {
-    const r = estado.resumo;
-    const achados = Object.values(estado.achados).reduce(
-      (t, v) => t + (Array.isArray(v) ? v.length : 0), 0);
-    document.getElementById("tiles").innerHTML = [
-      ["ativos", r.ativos ?? 0, "acc"],
+    const r = S.resumo;
+    $("indicadores").innerHTML = [
+      ["ativos", r.ativos ?? 0, "azul"],
       ["dispositivos", r.dispositivos ?? 0, ""],
       ["sondados", r.sondados ?? 0, ""],
-      ["alcançáveis", r.alcancaveis ?? 0, (r.alcancaveis ?? 0) > 0 ? "good" : "warn"],
-      ["achados", achados, achados ? "warn" : ""],
-    ].map(([t, v, c]) => `<div class="tile ${c}"><b>${v}</b><span>${t}</span></div>`).join("");
-
-    const m = r.modulos || {};
-    const partes = Object.entries(m).map(([nome, s]) =>
-      `${nome}: ${s.alvos_total - s.alvos_falha}/${s.alvos_total} em ${s.duracao_s}s`);
-    document.getElementById("sub").textContent =
-      partes.length ? partes.join(" · ") : "nenhum módulo reportou ainda";
+      ["respondendo", r.alcancaveis ?? 0, (r.alcancaveis ?? 0) ? "verde" : "vermelho"],
+    ].map(([t, v, c]) => `<div class="ind ${c}"><b>${v}</b><span>${t}</span></div>`).join("");
+    const m = Object.entries(S.saude)[0];
+    $("sub").textContent = m ? `${m[0]} · ${m[1].alvos_total} alvos` : "sem coleta";
   }
 
-  /* ------------------------------ árvore -------------------------------- */
-  function ativosVisiveis() {
-    if (!estado.filtro) return estado.ativos;
-    const f = estado.filtro.toLowerCase();
-    return estado.ativos.filter((a) => a.ativo_id.toLowerCase().includes(f));
-  }
-
+  /* ============================= árvore ================================== */
   function pintarArvore() {
+    const f = S.filtro.toLowerCase();
+    const lista = f ? S.ativos.filter((a) => a.ativo_id.toLowerCase().includes(f)) : S.ativos;
     const grupos = new Map();
-    for (const a of ativosVisiveis()) {
+    for (const a of lista) {
       if (!grupos.has(a.frota)) grupos.set(a.frota, []);
       grupos.get(a.frota).push(a);
     }
-    const alvo = document.getElementById("arvore");
-    if (!grupos.size) { alvo.innerHTML = `<p class="aviso">nada encontrado</p>`; return; }
-    alvo.innerHTML = [...grupos.entries()].map(([fr, lista]) => {
-      const aberto = estado.abertos.has(fr) || !!estado.filtro;
-      const itens = aberto ? `<ul>${lista.map((a) => {
-        const cls = pontoDoAtivo(estado.fichas.get(a.ativo_id));
-        return `<li><button data-ativo="${esc(a.ativo_id)}"
-          aria-current="${a.ativo_id === estado.selecionado}">
-          <span class="ponto ${cls}"></span>${esc(a.ativo_id)}
-          <span class="qtd">${a.dispositivos.length}</span></button></li>`;
-      }).join("")}</ul>` : "";
+    const alvo = $("arvore");
+    if (!grupos.size) { alvo.innerHTML = `<p class="vazio">nada encontrado</p>`; return; }
+    alvo.innerHTML = [...grupos.entries()].map(([fr, itens]) => {
+      const aberto = S.abertos.has(fr) || !!S.filtro;
+      const ul = aberto ? `<ul>${itens.map((a) => `<li>
+        <button data-ativo="${esc(a.ativo_id)}" aria-current="${a.ativo_id === S.sel}">
+          <span class="bolinha ${bolinha(S.fichas.get(a.ativo_id))}"></span>${esc(a.ativo_id)}
+          <span class="qtd">${a.dispositivos.length}</span></button></li>`).join("")}</ul>` : "";
       return `<div class="grupo"><button data-frota="${esc(fr)}">
-        <span class="seta">${aberto ? "▼" : "▶"}</span>${esc(NOME_FROTA[fr] || fr)}
-        <span class="cont">${lista.length}</span></button>${itens}</div>`;
+        <span class="seta">${aberto ? "▼" : "▶"}</span>${esc(FROTA[fr] || fr)}
+        <span class="cont">${itens.length}</span></button>${ul}</div>`;
     }).join("");
   }
 
-  /* ------------------------------- ficha -------------------------------- */
-  function pintarFicha(ficha) {
-    const { ativo: a, dispositivos: ds, sinais } = ficha;
-    const semColetor = sinais.filter((s) => !s.disponivel);
+  /* ============================ visão geral ============================== */
+  function trilha(a) {
+    return `<nav class="trilha"><b>Mina</b><span class="sep">›</span>
+      <b>Frota</b><span class="sep">›</span>
+      <b>${esc(FROTA[a.frota] || a.frota)}</b><span class="sep">›</span>
+      <b>${esc(a.ativo_id)}</b></nav>`;
+  }
 
-    const chips = ds.map((d) => {
+  function cabecalho(a, ds) {
+    const c = contar(ds);
+    const selo = !c.sondados ? `<span class="selo neutro">sem coleta</span>`
+      : c.vivos === c.sondados ? `<span class="selo verde">operando</span>`
+      : c.vivos === 0 ? `<span class="selo vermelho">sem resposta</span>`
+      : `<span class="selo ambar">atenção</span>`;
+    const img = foto(a.imagem);
+    const retrato = img
+      ? `<img class="retrato" src="${img}" alt="" data-foto-ativo>`
+      : `<div class="retrato vazia" data-foto-ativo>+ imagem</div>`;
+    return `<div class="cabecalho">
+      ${retrato}
+      <div class="titulo">
+        <h1>${esc(a.ativo_id)} ${selo}</h1>
+        <div class="linha-meta">
+          <span><b>Frota</b> ${esc(FROTA[a.frota] || a.frota)}</span>
+          <span><b>Função</b> ${esc(a.funcao_negocio)}</span>
+          <span><b>Dispositivos</b> ${c.total}</span>
+        </div>
+      </div>
+      <div class="acoes"><button class="botao" data-foto-ativo>Imagem</button></div>
+    </div>`;
+  }
+
+  function cartaoResumo(a, ds) {
+    const c = contar(ds);
+    return `<section class="cartao"><h2>Resumo do ativo</h2><div class="corpo">
+      <dl class="pares">
+        <dt>Código</dt><dd>${esc(a.ativo_id)}</dd>
+        <dt>Frota</dt><dd>${esc(a.frota)}</dd>
+        <dt>Número</dt><dd>${esc(a.numero)}</dd>
+        <dt>Função</dt><dd>${esc(a.funcao_negocio)}</dd>
+        <dt>Dispositivos</dt><dd>${c.total}</dd>
+        <dt>Arestas</dt><dd>${c.total} embarcado_em</dd>
+      </dl></div></section>`;
+  }
+
+  /** Alcance = respondendo ÷ sondados. Fórmula à vista de propósito: número
+   *  composto sem definição visível é número em que ninguém confia. */
+  function cartaoAlcance(ds) {
+    const c = contar(ds);
+    const pct = c.sondados ? Math.round((100 * c.vivos) / c.sondados) : null;
+    const raio = 42, circ = 2 * Math.PI * raio;
+    const traco = pct === null ? 0 : (circ * pct) / 100;
+    const cor = pct === null ? "var(--linha-forte)"
+      : pct === 100 ? "var(--verde)" : pct === 0 ? "var(--vermelho)" : "var(--ambar)";
+    return `<section class="cartao"><h2>Alcance</h2><div class="corpo">
+      <div class="medidor">
+        <div class="aro">
+          <svg width="96" height="96" viewBox="0 0 96 96" aria-hidden="true">
+            <circle cx="48" cy="48" r="${raio}" fill="none" stroke="var(--linha)" stroke-width="9"/>
+            <circle cx="48" cy="48" r="${raio}" fill="none" stroke="${cor}" stroke-width="9"
+              stroke-linecap="round" stroke-dasharray="${traco} ${circ}"/>
+          </svg>
+          <div class="valor" style="color:${cor}">${pct === null ? "—" : pct + "%"}</div>
+        </div>
+        <div class="legenda">
+          <div><span class="bolinha ok"></span>Respondendo <b>${c.vivos}</b></div>
+          <div><span class="bolinha mau"></span>Sem resposta <b>${c.mudos}</b></div>
+          <div><span class="bolinha"></span>Não sondados <b>${c.fora}</b></div>
+        </div>
+      </div>
+      <p class="formula">alcance = respondendo ÷ sondados (${c.vivos} ÷ ${c.sondados})</p>
+    </div></section>`;
+  }
+
+  function cartaoComponentes(ds) {
+    const pecas = ds.map((d) => {
       const s = situacao(d);
-      return `<div class="chip z-${esc(d.zona)}">
-        <div class="p">${esc(NOME_PAPEL[d.papel] || d.papel)}</div>
-        <div class="n">${esc(d.nome)}</div>
-        <div class="e"><span class="selo ${s.selo}">${s.texto}</span></div>
-      </div>`;
+      const img = foto(d.imagem);
+      const topo = img
+        ? `<img class="foto" src="${img}" alt="">`
+        : `<div class="foto vazia" data-foto-disp="${esc(d.chave)}">+ imagem</div>`;
+      return `<article class="peca z-${esc(d.zona)}">
+        ${topo}
+        ${img ? `<button class="trocar" data-foto-disp="${esc(d.chave)}" title="Trocar imagem">⌾</button>` : ""}
+        <div class="txt">
+          <div class="papel">${esc(PAPEL[d.papel] || d.papel)}</div>
+          <div class="nome">${esc(d.nome)}</div>
+          <span class="selo ${s.selo}" title="${esc(s.txt)}">${esc(s.curto)}</span>
+        </div></article>`;
     }).join("");
+    return `<section class="cartao"><h2>Componentes</h2>
+      <div class="corpo sem diagrama">
+        <div class="centralizado"><div class="no-raiz">${esc(S.sel)}</div></div>
+        <div class="trilho"></div>
+        <div class="pecas">${pecas}</div>
+      </div></section>`;
+  }
 
+  function tabelaDispositivos(ds) {
     const linhas = ds.map((d) => {
       const s = situacao(d);
-      const lat = d.latencia_ms === null || d.latencia_ms === undefined
-        ? `<td class="vazio">—</td>`
-        : `<td class="d">${d.latencia_ms.toFixed(2)} ms</td>`;
-      const perda = d.perda_pct === null || d.perda_pct === undefined
-        ? `<td class="vazio">—</td>`
-        : `<td class="d">${d.perda_pct.toFixed(0)}%</td>`;
+      const img = foto(d.imagem);
+      const cel = (v, suf = "") => (v === null || v === undefined)
+        ? `<td class="nulo">—</td>` : `<td class="mono">${v}${suf}</td>`;
       return `<tr>
-        <td class="n">${esc(d.nome)}</td>
-        <td class="d">${esc(NOME_PAPEL[d.papel] || d.papel)}</td>
-        <td class="d">${esc(d.ip || "—")}</td>
-        <td><span class="selo ${SELO_ZONA[d.zona] || "neutro"}">${esc(d.zona)}</span></td>
-        <td><span class="selo ${d.identidade === "mac" ? "good" : "warn"}">${esc(d.identidade)}</span></td>
-        <td><span class="selo ${s.selo}">${s.texto}</span></td>
-        ${lat}${perda}
+        <td>${img ? `<img class="mini" src="${img}" alt="">` : ""}</td>
+        <td class="nome">${esc(d.nome)}</td>
+        <td>${esc(PAPEL[d.papel] || d.papel)}</td>
+        <td class="mono">${esc(d.ip || "—")}</td>
+        <td><span class="selo liso ${CLASSE_ZONA[d.zona] || "neutro"}">${esc(d.zona)}</span></td>
+        <td><span class="selo liso ${d.identidade === "mac" ? "verde" : "ambar"}">${esc(d.identidade)}</span></td>
+        <td><span class="selo ${s.selo}">${s.txt}</span></td>
+        ${cel(d.latencia_ms === null || d.latencia_ms === undefined ? null : d.latencia_ms.toFixed(2), " ms")}
+        ${cel(d.perda_pct === null || d.perda_pct === undefined ? null : d.perda_pct.toFixed(0), "%")}
       </tr>`;
     }).join("");
-
-    const naoSondados = ds.filter((d) => d.alcancavel === null).length;
-    document.getElementById("centro").innerHTML = `
-      <div class="ficha">
-        <h1>${esc(a.ativo_id)}</h1>
-        <span class="selo acc">${esc(NOME_FROTA[a.frota] || a.frota)}</span>
-        <span class="meta"><b>função</b> ${esc(a.funcao_negocio)}</span>
-        <span class="meta"><b>dispositivos</b> ${ds.length}</span>
-        <span class="meta"><b>arestas</b> ${ds.length} embarcado_em</span>
-      </div>
-
-      <h2 class="secao">O que está embarcado</h2>
-      <div class="diagrama">
-        <div class="meio"><div class="no"><span>ativo</span>${esc(a.ativo_id)}</div></div>
-        <div class="trilho"></div>
-        <div class="chips">${chips}</div>
-      </div>
-      <p class="nota">Cada peça está ligada ao ativo por uma aresta
-        <b>embarcado_em</b> — a relação que junta rádio, pneu, CLP e GPS numa
-        máquina só. Barra amarela é zona OT; vermelha é zona proibida a módulos.</p>
-
-      <h2 class="secao">Dispositivos</h2>
-      <div class="quadro"><table>
-        <thead><tr><th>nome</th><th>papel</th><th>IP</th><th>zona</th>
-          <th>identidade</th><th>estado</th><th>latência</th><th>perda</th></tr></thead>
-        <tbody>${linhas}</tbody></table></div>
-      <p class="nota">
-        ${naoSondados ? `<b>${naoSondados}</b> de ${ds.length} não foram sondados —
-          estão em zona OT, e coleta ativa ali é decisão de outro marco.
-          “Não sondado” não é o mesmo que “sem resposta”. ` : ""}
-        ${semColetor.length ? `Sem coletor ainda:
-          ${semColetor.map((s) => `<b>${esc(s.familia)}</b> (${esc(s.motivo)})`).join(", ")}.` : ""}
-      </p>`;
+    return `<section class="cartao"><h2>Dispositivos</h2><div class="corpo sem"><div class="rolagem">
+      <table><thead><tr><th></th><th>Nome</th><th>Papel</th><th>IP</th><th>Zona</th>
+        <th>Identidade</th><th>Estado</th><th>Latência</th><th>Perda</th></tr></thead>
+      <tbody>${linhas}</tbody></table></div></div></section>`;
   }
 
-  /* --------------------------- outras seções ---------------------------- */
+  function pintarAtivo(ficha) {
+    const { ativo: a, dispositivos: ds } = ficha;
+    $("centro").innerHTML = trilha(a) + cabecalho(a, ds) +
+      `<div class="grade">${cartaoResumo(a, ds)}${cartaoAlcance(ds)}</div>` +
+      `<div class="grade larga">${cartaoComponentes(ds)}</div>` +
+      `<div class="grade larga">${tabelaDispositivos(ds)}</div>`;
+  }
+
+  function pintarDispositivos(ficha) {
+    $("centro").innerHTML = trilha(ficha.ativo) +
+      `<div class="grade larga">${tabelaDispositivos(ficha.dispositivos)}</div>`;
+  }
+
+  /* ============================ outras abas ============================== */
   function pintarModulos() {
-    const m = estado.resumo.modulos || {};
-    const linhas = Object.entries(m).map(([nome, s]) => `<tr>
-      <td class="d">${esc(nome)}</td>
-      <td class="d">${s.alvos_total}</td>
-      <td class="d">${s.alvos_falha}</td>
-      <td class="d">${s.duracao_s} s</td>
-      <td class="d">${s.rejeitadas}</td>
+    const linhas = Object.entries(S.saude).map(([n, s]) => `<tr>
+      <td class="mono">${esc(n)}</td><td class="mono">${s.alvos_total}</td>
+      <td class="mono">${s.alvos_falha}</td><td class="mono">${s.duracao_s} s</td>
+      <td class="mono">${s.rejeitadas}</td>
       <td>${s.ultima_coleta_ok
-        ? `<span class="selo good">${esc(s.ultima_coleta_ok.slice(11, 19))}</span>`
-        : `<span class="selo crit">nunca</span>`}</td></tr>`).join("");
-    document.getElementById("centro").innerHTML = `
-      <div class="ficha"><h1>Módulos</h1>
-        <span class="meta">a plataforma se observa antes de observar o resto</span></div>
-      <div class="quadro"><table>
-        <thead><tr><th>módulo</th><th>alvos</th><th>falhas</th><th>duração</th>
-          <th>recusadas</th><th>última coleta ok</th></tr></thead>
-        <tbody>${linhas || `<tr><td colspan="6" class="vazio">nenhum módulo reportou</td></tr>`}</tbody>
-      </table></div>
-      <p class="nota">Repare na distinção: um módulo com <b>muitas falhas de alvo</b> e
-        carimbo de última coleta presente funcionou — foram os equipamentos que não
-        responderam. Sem carimbo, quem não funcionou foi o módulo. É a diferença entre
-        “perguntei e está ruim” e “não consegui perguntar”.</p>`;
+        ? `<span class="selo verde">${esc(s.ultima_coleta_ok.slice(11, 19))}</span>`
+        : `<span class="selo vermelho">nunca</span>`}</td></tr>`).join("");
+    $("centro").innerHTML = `<div class="grade larga"><section class="cartao">
+      <h2>Coleta</h2><div class="corpo sem"><div class="rolagem"><table>
+      <thead><tr><th>Módulo</th><th>Alvos</th><th>Falhas</th><th>Duração</th>
+        <th>Recusadas</th><th>Última coleta ok</th></tr></thead>
+      <tbody>${linhas || `<tr><td colspan="6" class="nulo">nenhum módulo reportou</td></tr>`}</tbody>
+      </table></div></div></section></div>`;
   }
 
-  function pintarSinais() {
-    const linhas = estado.sinais.map((s) => `<tr>
-      <td class="d">${esc(s.familia)}</td>
-      <td>${s.disponivel ? `<span class="selo good">coletando</span>`
+  function pintarCobertura() {
+    const linhas = S.sinais.map((s) => `<tr>
+      <td class="mono">${esc(s.familia)}</td>
+      <td>${s.disponivel ? `<span class="selo verde">coletando</span>`
                          : `<span class="selo neutro">sem coletor</span>`}</td>
-      <td class="d">${esc(s.motivo || "—")}</td></tr>`).join("");
-    document.getElementById("centro").innerHTML = `
-      <div class="ficha"><h1>Cobertura</h1>
-        <span class="meta">o que já tem coletor, e por que o resto não tem</span></div>
-      <div class="quadro"><table>
-        <thead><tr><th>família</th><th>estado</th><th>motivo</th></tr></thead>
-        <tbody>${linhas}</tbody></table></div>
-      <p class="nota">Esta tela existe para que uma lacuna seja <b>informação</b>, não
-        mistério. Um campo vazio na ficha do ativo tem sempre uma explicação aqui.</p>`;
+      <td>${esc(s.motivo || "—")}</td></tr>`).join("");
+    $("centro").innerHTML = `<div class="grade larga"><section class="cartao">
+      <h2>Cobertura por família</h2><div class="corpo sem"><div class="rolagem"><table>
+      <thead><tr><th>Família</th><th>Estado</th><th>Motivo</th></tr></thead>
+      <tbody>${linhas}</tbody></table></div></div></section></div>`;
   }
 
-  function pintarAchados() {
+  function pintarCadastro() {
     const titulos = {
       conflitos: "MACs repetidos entre ativos", homonimos: "Homônimos desambiguados",
       divergencias: "Nome discorda do endereço", papel_desconhecido: "Papel não reconhecido",
       fora_do_padrao: "Nome fora do padrão",
     };
-    const blocos = Object.entries(titulos).map(([chave, titulo]) => {
-      const itens = estado.achados[chave] || [];
+    const cartoes = Object.entries(titulos).map(([k, t]) => {
+      const itens = S.achados[k] || [];
       if (!itens.length) return "";
-      return `<h2 class="secao">${titulo} — ${itens.length}</h2>
-        <div class="quadro"><table><tbody>
-        ${itens.slice(0, 25).map((i) => `<tr><td class="n">${esc(i)}</td></tr>`).join("")}
-        ${itens.length > 25 ? `<tr><td class="vazio">… mais ${itens.length - 25}</td></tr>` : ""}
-        </tbody></table></div>`;
+      return `<section class="cartao"><h2>${t} · ${itens.length}</h2>
+        <div class="corpo sem"><div class="rolagem"><table><tbody>
+        ${itens.slice(0, 20).map((i) => `<tr><td class="nome">${esc(i)}</td></tr>`).join("")}
+        ${itens.length > 20 ? `<tr><td class="nulo">… mais ${itens.length - 20}</td></tr>` : ""}
+        </tbody></table></div></div></section>`;
     }).join("");
-    document.getElementById("centro").innerHTML = `
-      <div class="ficha"><h1>Qualidade do cadastro</h1>
-        <span class="meta">o trabalho humano que sobrou depois da derivação</span></div>
-      ${blocos || `<p class="aviso">nenhum achado</p>`}`;
+    $("centro").innerHTML = cartoes
+      ? `<div class="grade">${cartoes}</div>`
+      : `<p class="vazio">nenhum achado</p>`;
   }
 
-  /* ------------------------------ fluxo --------------------------------- */
-  async function abrirAtivo(id) {
-    estado.selecionado = id;
+  /* ============================== fluxo ================================== */
+  async function ficha(id) {
+    if (!S.fichas.has(id)) S.fichas.set(id, await api(`/api/v1/ativos/${encodeURIComponent(id)}`));
+    return S.fichas.get(id);
+  }
+
+  async function pintarAba() {
+    if (S.aba === "modulos") return pintarModulos();
+    if (S.aba === "cobertura") return pintarCobertura();
+    if (S.aba === "cadastro") return pintarCadastro();
+    if (!S.sel) return;
+    const f = await ficha(S.sel);
     pintarArvore();
-    if (!estado.fichas.has(id)) {
-      estado.fichas.set(id, await api(`/api/v1/ativos/${encodeURIComponent(id)}`));
-    }
-    pintarFicha(estado.fichas.get(id));
+    return S.aba === "dispositivos" ? pintarDispositivos(f) : pintarAtivo(f);
   }
 
-  function pintarSecao() {
-    if (estado.secao === "modulos") return pintarModulos();
-    if (estado.secao === "sinais") return pintarSinais();
-    if (estado.secao === "achados") return pintarAchados();
-    return estado.selecionado ? abrirAtivo(estado.selecionado) : undefined;
+  function marcarAba() {
+    document.querySelectorAll(".abas button").forEach((b) =>
+      b.setAttribute("aria-current", String(b.dataset.aba === S.aba)));
   }
 
   async function atualizar() {
     const [resumo, ativos, sinais, achados] = await Promise.all([
-      api("/api/v1/resumo"), api("/api/v1/ativos"),
-      api("/api/v1/sinais"), api("/api/v1/achados"),
+      api("/api/v1/resumo"), api("/api/v1/ativos"), api("/api/v1/sinais"), api("/api/v1/achados"),
     ]);
-    Object.assign(estado, { resumo, ativos, sinais, achados });
-    estado.fichas.clear();
-    if (!estado.selecionado && ativos.length) {
-      estado.selecionado = ativos.reduce(
-        (a, b) => (b.dispositivos.length > a.dispositivos.length ? b : a), ativos[0]).ativo_id;
+    Object.assign(S, { resumo, ativos, sinais, achados, saude: resumo.modulos || {} });
+    if (!S.sel && ativos.length) {
+      S.sel = ativos.reduce((a, b) =>
+        (b.dispositivos.length > a.dispositivos.length ? b : a), ativos[0]).ativo_id;
     }
     pintarTopo();
     pintarArvore();
-    await pintarSecao();
-    document.getElementById("rodape").textContent =
-      `${resumo.ativos} ativos · ${resumo.dispositivos} dispositivos · ` +
-      `${resumo.arestas_abertas} arestas abertas · atualizado ${new Date().toLocaleTimeString("pt-BR")}`;
+    await pintarAba();
+    $("rodape").textContent =
+      `${resumo.ativos} ativos · ${resumo.dispositivos} dispositivos · ${resumo.arestas_abertas} arestas`;
+    $("versao").textContent = `atualizado ${new Date().toLocaleTimeString("pt-BR")}`;
   }
 
-  document.getElementById("arvore").addEventListener("click", (e) => {
-    const bAtivo = e.target.closest("[data-ativo]");
-    if (bAtivo) { estado.secao = "ativos"; marcarSecao(); abrirAtivo(bAtivo.dataset.ativo); return; }
-    const bFrota = e.target.closest("[data-frota]");
-    if (bFrota) {
-      const f = bFrota.dataset.frota;
-      estado.abertos.has(f) ? estado.abertos.delete(f) : estado.abertos.add(f);
-      pintarArvore();
+  $("arvore").addEventListener("click", async (e) => {
+    const a = e.target.closest("[data-ativo]");
+    if (a) { S.sel = a.dataset.ativo; if (S.aba !== "dispositivos") S.aba = "ativo";
+             marcarAba(); await pintarAba(); return; }
+    const g = e.target.closest("[data-frota]");
+    if (g) { const f = g.dataset.frota;
+             S.abertos.has(f) ? S.abertos.delete(f) : S.abertos.add(f); pintarArvore(); }
+  });
+
+  document.querySelector(".abas").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-aba]");
+    if (!b) return;
+    S.aba = b.dataset.aba; marcarAba(); await pintarAba();
+  });
+
+  $("centro").addEventListener("click", async (e) => {
+    if (e.target.closest("[data-foto-ativo]")) {
+      escolherAbrangenciaAtivo((await ficha(S.sel)).ativo); return;
+    }
+    const d = e.target.closest("[data-foto-disp]");
+    if (d) {
+      const f = await ficha(S.sel);
+      const alvo = f.dispositivos.find((x) => x.chave === d.dataset.fotoDisp);
+      if (alvo) escolherAbrangencia(alvo);
     }
   });
 
-  function marcarSecao() {
-    document.querySelectorAll(".secoes button").forEach((b) =>
-      b.setAttribute("aria-current", String(b.dataset.secao === estado.secao)));
-  }
-
-  document.querySelector(".secoes").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-secao]");
-    if (!b) return;
-    estado.secao = b.dataset.secao;
-    marcarSecao();
-    pintarSecao();
-  });
-
   let t;
-  document.getElementById("busca").addEventListener("input", (e) => {
+  $("busca").addEventListener("input", (e) => {
     clearTimeout(t);
-    t = setTimeout(() => { estado.filtro = e.target.value.trim(); pintarArvore(); }, 120);
+    t = setTimeout(() => { S.filtro = e.target.value.trim(); pintarArvore(); }, 120);
   });
 
   atualizar().catch((erro) => {
-    document.getElementById("centro").innerHTML =
-      `<p class="aviso">Não consegui falar com a API: ${esc(erro.message)}</p>`;
+    $("centro").innerHTML = `<p class="vazio">Sem resposta da API: ${esc(erro.message)}</p>`;
   });
   setInterval(() => atualizar().catch(() => {}), 30000);
 })();

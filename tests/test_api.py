@@ -112,7 +112,7 @@ class TestShell:
     def test_raiz_entrega_o_shell(self, cliente: TestClient) -> None:
         resposta = cliente.get("/")
         assert resposta.status_code == 200
-        assert "Plataforma TI + OT" in resposta.text
+        assert "FROTA MINA" in resposta.text
 
     def test_estaticos_existem(self, cliente: TestClient) -> None:
         for arquivo in ("app.css", "app.js"):

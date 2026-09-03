@@ -37,6 +37,7 @@ from .esquema import (
     metadata,
     saude_modulo,
 )
+from .imagens import mapa as mapa_imagens
 
 INFINITO = None  # limite superior aberto de um tstzrange
 
@@ -337,6 +338,7 @@ class RepositorioPostgres:
     async def carregar(cls, engine: AsyncEngine) -> RepositorioPostgres:
         async with engine.connect() as conexao:
             vencedores = await campos_vencedores(conexao)
+            fotos = await mapa_imagens(conexao)
 
             linhas_ativo = (await conexao.execute(select(ativo))).all()
             ativos = [
@@ -347,6 +349,8 @@ class RepositorioPostgres:
                     funcao_negocio=vencedores.get(sujeito_ativo(ln.ativo_id), {})
                     .get("funcao_negocio", ("desconhecido", ""))[0],
                     dispositivos=[],
+                    # Cascata: foto da máquina, senão a da frota.
+                    imagem=fotos.get(f"ativo:{ln.ativo_id}") or fotos.get(f"frota:{ln.frota}"),
                 )
                 for ln in linhas_ativo
             ]
@@ -378,6 +382,8 @@ class RepositorioPostgres:
                         perda_pct=visto.perda_pct if visto else None,
                         qualidade=visto.qualidade if visto else None,
                         visto_em=visto.visto_em if visto else None,
+                        # Cascata: foto do aparelho, senão a do papel.
+                        imagem=fotos.get(f"disp:{ln.chave}") or fotos.get(f"papel:{ln.papel}"),
                     )
                 )
 
