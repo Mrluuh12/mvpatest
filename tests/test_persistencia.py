@@ -35,9 +35,12 @@ from plataforma.db.repositorio_pg import (
     sujeito_dispositivo,
 )
 
+# Banco separado de propósito: estas fixtures apagam o esquema entre os
+# testes, e uma suíte que destrói o banco de desenvolvimento é uma suíte que
+# as pessoas param de rodar.
 URL = os.environ.get(
     "PLATAFORMA_BANCO_TESTE",
-    "postgresql+asyncpg://postgres@localhost:5432/plataforma",
+    "postgresql+asyncpg://postgres@localhost:5432/plataforma_teste",
 )
 
 pytestmark = pytest.mark.asyncio

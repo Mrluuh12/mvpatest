@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -29,6 +30,15 @@ class DispositivoLido(BaseModel):
     identidade: str = "nenhum"
     fabricante: str = ""
     criticidade: str = ""
+
+    # Estado observado. `None` significa "ainda não sondado" — e é diferente de
+    # `alcancavel=False`, que significa "sondado e não respondeu". A interface
+    # precisa poder dizer qual dos dois é o caso.
+    alcancavel: bool | None = None
+    latencia_ms: float | None = None
+    perda_pct: float | None = None
+    qualidade: str | None = None
+    visto_em: datetime | None = None
 
 
 class AtivoLido(BaseModel):

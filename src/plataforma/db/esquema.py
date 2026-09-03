@@ -22,10 +22,13 @@ from __future__ import annotations
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
+    Integer,
     MetaData,
     String,
     Table,
@@ -131,4 +134,53 @@ achado = Table(
     Column("descricao", Text, nullable=False),
     Column("em", DateTime(timezone=True), nullable=False),
     Index("ix_achado_categoria", "categoria"),
+)
+
+
+#: Estado corrente de cada dispositivo. Uma linha por dispositivo, sobrescrita
+#: a cada coleta — é o que a tela do ativo lê.
+estado = Table(
+    "estado",
+    metadata,
+    Column("sujeito", Text, primary_key=True),
+    Column("alcancavel", Boolean, nullable=False),
+    Column("latencia_ms", Float),
+    Column("perda_pct", Float),
+    Column("jitter_ms", Float),
+    Column("qualidade", String(16), nullable=False, server_default=text("'boa'")),
+    Column("visto_em", DateTime(timezone=True), nullable=False),
+    Index("ix_estado_alcancavel", "alcancavel"),
+)
+
+
+#: Só as **mudanças** de estado, nunca uma linha por amostra.
+#:
+#: Disponibilidade não precisa de um registro por minuto: precisa de saber
+#: quando mudou. Sondando 708 dispositivos a cada minuto, guardar amostras
+#: daria ~1 milhão de linhas por dia; guardar transições dá algumas dezenas.
+#: E é exatamente a matéria-prima que o motor de alarmes vai querer quando
+#: chegar a vez dele.
+transicao = Table(
+    "transicao",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("sujeito", Text, nullable=False),
+    Column("de", Boolean),
+    Column("para", Boolean, nullable=False),
+    Column("em", DateTime(timezone=True), nullable=False),
+    Index("ix_transicao_sujeito", "sujeito", "em"),
+)
+
+
+#: Saúde de cada módulo — as cinco séries obrigatórias, no seu estado atual.
+saude_modulo = Table(
+    "saude_modulo",
+    metadata,
+    Column("modulo", Text, primary_key=True),
+    Column("ultima_coleta_ok", DateTime(timezone=True)),
+    Column("alvos_total", Integer, nullable=False, server_default=text("0")),
+    Column("alvos_falha", Integer, nullable=False, server_default=text("0")),
+    Column("duracao_s", Float, nullable=False, server_default=text("0")),
+    Column("rejeitadas", Integer, nullable=False, server_default=text("0")),
+    Column("atualizado_em", DateTime(timezone=True), nullable=False),
 )

@@ -1,4 +1,4 @@
-# Plataforma TI + OT — marco M0
+# Plataforma TI + OT — marcos M0 e M1
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -108,7 +108,7 @@ pode ser operadora na zona corporativa e apenas leitora em OT.
 
 ```bash
 pip install -e . && pip install pytest ruff
-python -m pytest -q      # 72 testes
+python -m pytest -q      # 114 testes
 python -m ruff check src tests
 ```
 
@@ -160,10 +160,65 @@ A rota `/api/v1/sinais` existe por um motivo: cada família do dicionário decla
 se tem coletor e, quando não tem, **por quê**. É o que permite a interface dizer
 *"aguarda o coletor ICMP"* em vez de mostrar um traço mudo — ou, pior, um zero.
 
+## Coleta (marco M1)
+
+Um contrato de módulo, um agendador e o primeiro coletor. O ICMP entra
+primeiro porque é o único sinal universal deste parque: **11 de 723 ativos
+falam SNMP; todos os 723 respondem — ou deixam de responder — a ICMP**, e não
+exige credencial nenhuma.
+
+```bash
+export PLATAFORMA_BANCO="postgresql+asyncpg://usuario@host:5432/plataforma"
+python -m plataforma.coletor --uma-vez        # um ciclo e sai
+python -m plataforma.coletor                  # serve continuamente
+```
+
+Contra o parque real: **367 dispositivos sondados em 3 s**. Os outros 341
+ficam de fora porque estão em zona OT — o filtro de zona é o que impede um
+coletor corporativo alcançar controlador por engano.
+
+### Quatro decisões que este marco materializa
+
+**Zona do coletor × zona do módulo.** O manifesto declara onde pode operar; o
+processo declara onde está. Não batendo, o módulo não carrega — e a recusa
+acontece antes de qualquer pacote sair. Declarar os níveis 0 a 2 do Purdue é
+inválido em *qualquer* manifesto: não é configuração, é impossibilidade.
+
+**Ausência não vira zero.** Quem não responde recebe `ativo_alcancavel = 0` e
+**nenhuma latência**. Zero afirmaria resposta instantânea de um equipamento
+mudo — número plausível e errado, que reaparece meses depois num relatório de
+disponibilidade indefensável. No banco, a coluna fica nula.
+
+**Transições, não amostras.** O estado corrente é sobrescrito; o histórico
+recebe uma linha só quando o estado muda. Sondando 708 dispositivos por
+minuto, a diferença é entre ~1 milhão de linhas por dia e algumas dezenas — e
+a disponibilidade de qualquer janela continua calculável.
+
+**Falha total é suspeita de isolamento.** Se *todos* os alvos falham de uma
+vez, a explicação mais provável não é que o parque caiu: é que o coletor ficou
+sem rede. Nesse caso nenhuma transição é registrada e o estado fica marcado
+como incerto. Sem isso, uma única falha do coletor fabricaria 367 incidentes
+falsos.
+
+### Auto-observação obrigatória
+
+O agendador — não o módulo — emite as cinco séries da família `modulo`,
+inclusive e principalmente quando a coleta falha. Módulo que morre em silêncio
+faz as métricas simplesmente pararem, e ausência de dado ruim é
+indistinguível de ausência de problema.
+
+O carimbo `ultima_coleta_ok` só avança quando houve sucesso. Repare na
+distinção que ele preserva: numa coleta com `alvos_falha = 367` e carimbo
+presente, o módulo funcionou e os alvos é que não responderam — *"perguntei e
+está ruim"*, não *"não consegui perguntar"*.
+
 ## O que ainda não está aqui
 
-- Coletor ICMP (a outra metade do marco M1)
-- Canal B — ingestão de fatos estruturais e o grafo temporal
-- Interface: o shell foi iniciado e removido — volta em M1, agora que a
-  persistência existe e a forma da API está acordada
-- Subsistema de ação
+- Interface: shell da aplicação e lente do ativo — a parte de M1 que falta
+- Canal B — ingestão de fatos estruturais e o grafo temporal (marco M2)
+- Módulo SNMP declarativo e séries históricas (marco M3)
+- Subsistema de ação (marco M4)
+
+Os testes usam um banco separado (`plataforma_teste`) de propósito: as
+fixtures apagam o esquema entre casos, e uma suíte que destrói o banco de
+desenvolvimento é uma suíte que as pessoas param de rodar.

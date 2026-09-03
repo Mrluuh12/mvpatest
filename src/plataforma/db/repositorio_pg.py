@@ -26,7 +26,17 @@ from inventario.modelo import PRECEDENCIA, Natureza, Origem
 from inventario.semeadura import Semeadura
 
 from ..repositorio import Achados, AtivoLido, DispositivoLido
-from .esquema import achado, aresta, ativo, campo, dispositivo, identificador, metadata
+from .esquema import (
+    achado,
+    aresta,
+    ativo,
+    campo,
+    dispositivo,
+    estado,
+    identificador,
+    metadata,
+    saude_modulo,
+)
 
 INFINITO = None  # limite superior aberto de um tstzrange
 
@@ -345,10 +355,15 @@ class RepositorioPostgres:
             for ln in (await conexao.execute(select(identificador))).all():
                 ids.setdefault(ln.dispositivo_chave, {})[ln.tipo] = ln.valor
 
+            estados = {
+                ln.sujeito: ln for ln in (await conexao.execute(select(estado))).all()
+            }
+
             dispositivos = []
             for ln in (await conexao.execute(select(dispositivo))).all():
                 meus = ids.get(ln.chave, {})
                 forte = next((t for t in ("mac", "serie", "nome") if t in meus), "nenhum")
+                visto = estados.get(ln.chave)
                 dispositivos.append(
                     DispositivoLido(
                         chave=ln.chave,
@@ -358,6 +373,11 @@ class RepositorioPostgres:
                         ip=meus.get("ip", ""),
                         ativo_id=ln.ativo_id or "",
                         identidade=forte,
+                        alcancavel=visto.alcancavel if visto else None,
+                        latencia_ms=visto.latencia_ms if visto else None,
+                        perda_pct=visto.perda_pct if visto else None,
+                        qualidade=visto.qualidade if visto else None,
+                        visto_em=visto.visto_em if visto else None,
                     )
                 )
 
@@ -377,11 +397,27 @@ class RepositorioPostgres:
             for ln in (await conexao.execute(select(achado))).all():
                 achados_por_cat.setdefault(ln.categoria, []).append(ln.descricao)
 
+            saude = {
+                ln.modulo: {
+                    "ultima_coleta_ok": ln.ultima_coleta_ok.isoformat()
+                    if ln.ultima_coleta_ok
+                    else None,
+                    "alvos_total": ln.alvos_total,
+                    "alvos_falha": ln.alvos_falha,
+                    "duracao_s": round(ln.duracao_s, 3),
+                    "rejeitadas": ln.rejeitadas,
+                }
+                for ln in (await conexao.execute(select(saude_modulo))).all()
+            }
+            sondados = [d for d in dispositivos if d.alcancavel is not None]
             resumo = {
                 "ativos": len(ativos),
                 "dispositivos": len(dispositivos),
                 "arestas_abertas": abertas or 0,
                 "divergencias": len(await divergencias(conexao)),
+                "sondados": len(sondados),
+                "alcancaveis": sum(1 for d in sondados if d.alcancavel),
+                "modulos": saude,
             }
             achados_obj = Achados(
                 conflitos=achados_por_cat.get("conflito", []),
