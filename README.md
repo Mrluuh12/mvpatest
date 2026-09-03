@@ -224,6 +224,10 @@ uvicorn plataforma.api:app --host 0.0.0.0 --port 8000
 Sem etapa de build, de propósito: a barreira para alguém da equipe abrir e
 corrigir precisa ser baixa. Migrar para um framework depois é decisão local.
 
+Barra superior azul-marinho com contadores, árvore hierárquica (Minas › Frota
+› tipo › ativo) mostrando o estado de cada máquina, filtros rápidos, cartões
+com título e grade densa — a linguagem visual das telas de referência.
+
 A regra que atravessa a interface: **a tela nunca inventa número.** Um
 dispositivo pode estar em três situações, e as três são visualmente distintas:
 
@@ -240,7 +244,27 @@ A aba **Cobertura** lê `/api/v1/sinais` e diz, para cada família do dicionári
 se há coletor e — quando não há — por quê. Uma lacuna vira informação em vez de
 mistério.
 
-A aba **Módulos** mostra a plataforma se observando. Repare na distinção que ela
+### Imagens
+
+Ativos e dispositivos aceitam imagem, e o sujeito é **hierárquico**:
+
+| Sujeito | Alcance |
+|---|---|
+| `disp:<chave>` | aquele aparelho |
+| `papel:<papel>` | todos os dispositivos daquele papel |
+| `ativo:<id>` | aquela máquina |
+| `frota:<sigla>` | todos os ativos da frota |
+
+É a cascata que torna o recurso usável: **17 fotos, uma por papel, cobrem os
+708 dispositivos**. Foto específica, quando existir, tem precedência. Ao clicar
+numa imagem, a escolha de abrangência aparece com as duas opções nomeadas.
+
+O arquivo é gravado com nome derivado do conteúdo — nunca o nome que veio no
+envio — e o tipo servido é o que a plataforma registrou, nunca o cabeçalho de
+quem enviou. Como só se encontra pelo nome registrado no banco, não há
+travessia de caminho a explorar.
+
+A aba **Coleta** mostra a plataforma se observando. Repare na distinção que ela
 preserva: um módulo com muitas falhas de alvo *e* carimbo de última coleta
 presente funcionou — foram os equipamentos que não responderam.
 

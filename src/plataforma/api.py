@@ -238,6 +238,23 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
+    @app.get("/api/v1/transicoes", tags=["inventario"])
+    async def transicoes(ativo_id: str | None = None, limite: int = 20) -> list[dict]:
+        """Mudanças de estado observadas — o histórico que existe hoje."""
+        if fonte._engine is None:
+            return []
+        from .db.coleta import ultimas_transicoes
+
+        chaves = (
+            [d.chave for d in fonte.repo.dispositivos(ativo_id)] if ativo_id else None
+        )
+        if ativo_id and not chaves:
+            return []
+        async with fonte._engine.connect() as conexao:
+            brutas = await ultimas_transicoes(conexao, chaves, limite)
+        nomes = {d.chave: d.nome for d in fonte.repo.dispositivos()}
+        return [{**t, "nome": nomes.get(t["sujeito"], t["sujeito"])} for t in brutas]
+
     @app.get("/api/v1/resumo", tags=["inventario"])
     def resumo() -> dict:
         return fonte.repo.resumo()

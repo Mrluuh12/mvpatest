@@ -213,3 +213,24 @@ async def disponibilidade(
 
     total = (fim - desde).total_seconds()
     return 100.0 * acumulado / total if total > 0 else None
+
+
+async def ultimas_transicoes(
+    conexao: AsyncConnection, sujeitos: list[str] | None = None, limite: int = 20
+) -> list[dict]:
+    """As últimas mudanças de estado, mais recentes primeiro.
+
+    É o que a plataforma tem de mais próximo de um histórico de eventos
+    enquanto o motor de alarmes não existe — e, diferente de um alarme, cada
+    linha aqui é um fato observado, não uma regra que alguém escreveu.
+    """
+    consulta = select(
+        transicao.c.sujeito, transicao.c.de, transicao.c.para, transicao.c.em
+    ).order_by(transicao.c.em.desc()).limit(limite)
+    if sujeitos:
+        consulta = consulta.where(transicao.c.sujeito.in_(sujeitos))
+    linhas = (await conexao.execute(consulta)).all()
+    return [
+        {"sujeito": ln.sujeito, "de": ln.de, "para": ln.para, "em": ln.em}
+        for ln in linhas
+    ]

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Frota Mina</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231B4A8F'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='13' font-weight='700' fill='white' text-anchor='middle'%3EFM%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='16' fill='%23FFFFFF'/%3E%3Cpath d='M16 7 L25 24 H7 Z' fill='%230E2A4D'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -12,37 +12,56 @@
 </head>
 <body>
 
-<header class="topo">
-  <div class="marca">
-    <span class="logo" aria-hidden="true">FM</span>
-    <span class="nome"><b>FROTA MINA</b><span id="sub">—</span></span>
+<header class="barra">
+  <div class="identidade">
+    <span class="emblema" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3 21 20H3z"/></svg>
+    </span>
+    <span class="txt"><b>FROTA MINA</b><span id="site">—</span></span>
   </div>
-  <div class="busca">
-    <input id="busca" type="search" placeholder="Pesquisar ativo, dispositivo, IP…"
-           autocomplete="off" aria-label="Pesquisar">
+
+  <div class="pesquisa">
+    <select id="escopo" aria-label="Escopo da busca">
+      <option value="ativos">Ativos</option>
+      <option value="dispositivos">Dispositivos</option>
+    </select>
+    <input id="busca" type="search" placeholder="Pesquisar ativo, dispositivo, IP…" autocomplete="off">
+    <span class="lupa" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    </span>
   </div>
-  <div class="indicadores" id="indicadores"></div>
+
+  <nav class="menus" id="menus" aria-label="Indicadores"></nav>
 </header>
 
 <nav class="abas" aria-label="Seções">
   <button data-aba="ativo" aria-current="true">Visão Geral</button>
   <button data-aba="dispositivos">Dispositivos</button>
-  <button data-aba="modulos">Coleta</button>
+  <button data-aba="rede" disabled title="Marco M2 — grafo temporal">Rede</button>
+  <button data-aba="coleta">Coleta</button>
   <button data-aba="cobertura">Cobertura</button>
   <button data-aba="cadastro">Cadastro</button>
 </nav>
 
 <div class="app">
-  <nav class="rail" aria-label="Árvore de ativos">
-    <h3>Árvore de ativos</h3>
-    <div id="arvore"></div>
-  </nav>
-  <main class="centro" id="centro"><p class="vazio">Carregando…</p></main>
+  <aside class="lateral">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+        <path d="M6.5 10v4.5a2 2 0 0 0 2 2H14"/></svg>
+      Árvore de Ativos
+    </h3>
+    <div class="filtro-arvore"><input id="filtro" type="search" placeholder="Filtrar árvore…"></div>
+    <div class="arvore" id="arvore"></div>
+    <div class="rapidos" id="rapidos"></div>
+  </aside>
+  <main class="centro" id="centro"><p class="nada">Carregando…</p></main>
 </div>
 
-<footer class="rodape-app">
-  <span id="rodape">—</span>
-  <span id="versao"></span>
+<footer class="rodape">
+  <span id="versao">—</span>
+  <span id="atualizado"></span>
 </footer>
 
 <input type="file" id="seletor" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden>
