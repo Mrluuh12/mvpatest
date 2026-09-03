@@ -7,11 +7,19 @@ Duas regras que valem desde a primeira rota:
 * **Ausência de dado é resposta, não erro.** Uma família de sinais que ainda não
   tem coletor devolve ``disponivel: false`` com o motivo — nunca zero, nunca uma
   lista vazia que se confunde com "está tudo bem".
+
+O repositório é recarregado periodicamente em segundo plano. Ler tudo de uma vez
+e servir de memória é mais simples e mais rápido nesta escala; quando deixar de
+ser, o ponto de troca está num lugar só.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -21,13 +29,13 @@ from pydantic import BaseModel
 
 from .repositorio import AtivoLido, DispositivoLido, Repositorio, RepositorioMemoria
 
-VERSAO = "0.1.0"
+VERSAO = "0.2.0"
 WEB = Path(__file__).parent / "web"
 
-#: Onde está o inventário semeado. Configurável para que teste e produção não
-#: disputem o mesmo arquivo.
+VAR_BANCO = "PLATAFORMA_BANCO"
 VAR_INVENTARIO = "PLATAFORMA_INVENTARIO"
 PADRAO_INVENTARIO = "dados/inventario.json"
+INTERVALO_RECARGA_S = 20
 
 
 class Sinal(BaseModel):
@@ -48,19 +56,12 @@ class FichaAtivo(BaseModel):
     sinais: list[Sinal]
 
 
-def carregar_repositorio() -> Repositorio:
-    caminho = Path(os.environ.get(VAR_INVENTARIO, PADRAO_INVENTARIO))
-    if caminho.exists():
-        return RepositorioMemoria.de_arquivo(caminho)
-    return RepositorioMemoria.vazio()
-
-
 #: Famílias do dicionário canônico e quem as alimenta. Enquanto o coletor não
 #: existe, o motivo aparece na tela — a lacuna vira informação, não mistério.
 SINAIS = [
     Sinal(familia="inventario", disponivel=True),
     Sinal(familia="topologia", disponivel=True, motivo="apenas arestas embarcado_em"),
-    Sinal(familia="disponibilidade", disponivel=False, motivo="aguarda o coletor ICMP"),
+    Sinal(familia="disponibilidade", disponivel=True, motivo="coletor ICMP, zona corporativa"),
     Sinal(familia="rf", disponivel=False, motivo="aguarda o módulo Rajant no canal de fatos"),
     Sinal(familia="malha", disponivel=False, motivo="aguarda vizinhança pela BC API"),
     Sinal(familia="interface", disponivel=False, motivo="aguarda o módulo SNMP declarativo"),
@@ -71,12 +72,78 @@ SINAIS = [
 ]
 
 
+class Fonte:
+    """Guarda o repositório em uso e sabe recarregá-lo."""
+
+    def __init__(self, repositorio: Repositorio | None = None) -> None:
+        self.repo: Repositorio = repositorio or RepositorioMemoria.vazio()
+        self.fixo = repositorio is not None
+        self.carregado_em: datetime | None = None
+        self.erro: str | None = None
+        self._engine = None
+
+    async def iniciar(self) -> None:
+        if self.fixo:
+            return
+        if url := os.environ.get(VAR_BANCO):
+            from .db.repositorio_pg import criar_engine
+
+            self._engine = criar_engine(url)
+            await self.recarregar()
+            return
+        caminho = Path(os.environ.get(VAR_INVENTARIO, PADRAO_INVENTARIO))
+        if caminho.exists():
+            self.repo = RepositorioMemoria.de_arquivo(caminho)
+            self.carregado_em = datetime.now(UTC)
+
+    async def recarregar(self) -> None:
+        if self._engine is None:
+            return
+        from .db.repositorio_pg import RepositorioPostgres
+
+        try:
+            self.repo = await RepositorioPostgres.carregar(self._engine)
+            self.carregado_em = datetime.now(UTC)
+            self.erro = None
+        except Exception as erro:  # noqa: BLE001 - falha de recarga não derruba a API
+            # O repositório anterior continua servindo. Mas o erro fica à vista
+            # em /saude: dado velho servido em silêncio é dado errado.
+            self.erro = repr(erro)
+
+    async def encerrar(self) -> None:
+        if self._engine is not None:
+            await self._engine.dispose()
+
+
 def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
-    repo = repositorio or carregar_repositorio()
+    fonte = Fonte(repositorio)
+
+    @contextlib.asynccontextmanager
+    async def ciclo(_app: FastAPI) -> AsyncIterator[None]:
+        await fonte.iniciar()
+        tarefa: asyncio.Task | None = None
+        if not fonte.fixo and fonte._engine is not None:
+
+            async def recarregar_sempre() -> None:
+                while True:
+                    await asyncio.sleep(INTERVALO_RECARGA_S)
+                    await fonte.recarregar()
+
+            tarefa = asyncio.create_task(recarregar_sempre(), name="recarga")
+        try:
+            yield
+        finally:
+            if tarefa is not None:
+                tarefa.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await tarefa
+            await fonte.encerrar()
+
     app = FastAPI(
         title="Plataforma TI + OT",
         version=VERSAO,
         description="Observabilidade e ação sobre os ativos da mina.",
+        lifespan=ciclo,
     )
 
     @app.get("/api/v1/saude", tags=["plataforma"])
@@ -87,12 +154,12 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         indistinguível de ausência de problema. Por isso a plataforma se
         observa antes de observar qualquer outra coisa.
         """
-        resumo = repo.resumo()
+        resumo = fonte.repo.resumo()
         return {
             "versao": VERSAO,
             "inventario_carregado": bool(resumo.get("dispositivos")),
-            "modulos_registrados": 0,
-            "coletas_ativas": 0,
+            "carregado_em": fonte.carregado_em,
+            "erro_de_recarga": fonte.erro,
             "resumo": resumo,
         }
 
@@ -100,39 +167,44 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
     def sinais() -> list[Sinal]:
         return SINAIS
 
+    @app.post("/api/v1/recarregar", tags=["plataforma"])
+    async def recarregar() -> dict:
+        await fonte.recarregar()
+        return {"carregado_em": fonte.carregado_em, "erro": fonte.erro}
+
     @app.get("/api/v1/resumo", tags=["inventario"])
     def resumo() -> dict:
-        return repo.resumo()
+        return fonte.repo.resumo()
 
     @app.get("/api/v1/achados", tags=["inventario"])
     def achados() -> dict:
-        return repo.achados().model_dump()
+        return fonte.repo.achados().model_dump()
 
     @app.get("/api/v1/distribuicao/{campo}", tags=["inventario"])
     def distribuicao(campo: str) -> dict[str, int]:
         try:
-            return repo.distribuicao(campo)
+            return fonte.repo.distribuicao(campo)
         except ValueError as erro:
             raise HTTPException(status_code=404, detail=str(erro)) from erro
 
     @app.get("/api/v1/ativos", response_model=list[AtivoLido], tags=["inventario"])
     def ativos() -> list[AtivoLido]:
-        return repo.ativos()
+        return fonte.repo.ativos()
 
     @app.get("/api/v1/ativos/{ativo_id}", response_model=FichaAtivo, tags=["inventario"])
     def ficha(ativo_id: str) -> FichaAtivo:
-        alvo = repo.ativo(ativo_id)
+        alvo = fonte.repo.ativo(ativo_id)
         if alvo is None:
             raise HTTPException(status_code=404, detail=f"ativo {ativo_id!r} não existe")
         return FichaAtivo(
             ativo=alvo,
-            dispositivos=repo.dispositivos(ativo_id),
+            dispositivos=fonte.repo.dispositivos(ativo_id),
             sinais=SINAIS,
         )
 
     @app.get("/api/v1/dispositivos", response_model=list[DispositivoLido], tags=["inventario"])
     def dispositivos(ativo_id: str | None = None) -> list[DispositivoLido]:
-        return repo.dispositivos(ativo_id)
+        return fonte.repo.dispositivos(ativo_id)
 
     @app.get(
         "/api/v1/dispositivos/{chave:path}",
@@ -140,7 +212,7 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         tags=["inventario"],
     )
     def dispositivo(chave: str) -> DispositivoLido:
-        alvo = repo.dispositivo(chave)
+        alvo = fonte.repo.dispositivo(chave)
         if alvo is None:
             raise HTTPException(status_code=404, detail=f"dispositivo {chave!r} não existe")
         return alvo

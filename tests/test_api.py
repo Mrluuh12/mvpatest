@@ -54,7 +54,15 @@ def cliente() -> TestClient:
 def test_saude_relata_a_propria_plataforma(cliente: TestClient) -> None:
     corpo = cliente.get("/api/v1/saude").json()
     assert corpo["inventario_carregado"] is True
-    assert corpo["modulos_registrados"] == 0
+    assert corpo["erro_de_recarga"] is None
+
+
+def test_falha_de_recarga_aparece_em_vez_de_servir_dado_velho_em_silencio(
+    cliente: TestClient,
+) -> None:
+    """Dado velho servido sem aviso é dado errado."""
+    corpo = cliente.get("/api/v1/saude").json()
+    assert "erro_de_recarga" in corpo, "a falha precisa ser observável"
 
 
 def test_ficha_traz_dispositivos_e_sinais(cliente: TestClient) -> None:
@@ -96,3 +104,21 @@ def test_campo_de_distribuicao_desconhecido_devolve_404(cliente: TestClient) -> 
 def test_repositorio_vazio_nao_finge_estar_saudavel() -> None:
     cliente = TestClient(criar_app(RepositorioMemoria.vazio()))
     assert cliente.get("/api/v1/saude").json()["inventario_carregado"] is False
+
+
+class TestShell:
+    """A interface é cliente da API. Estes testes garantem que ela é servida."""
+
+    def test_raiz_entrega_o_shell(self, cliente: TestClient) -> None:
+        resposta = cliente.get("/")
+        assert resposta.status_code == 200
+        assert "Plataforma TI + OT" in resposta.text
+
+    def test_estaticos_existem(self, cliente: TestClient) -> None:
+        for arquivo in ("app.css", "app.js"):
+            assert cliente.get(f"/estatico/{arquivo}").status_code == 200
+
+    def test_shell_nao_pede_recurso_inexistente(self, cliente: TestClient) -> None:
+        """Console limpo importa numa ferramenta que fica aberta o dia todo."""
+        html = cliente.get("/").text
+        assert 'rel="icon"' in html, "sem favicon, todo carregamento gera um 404"

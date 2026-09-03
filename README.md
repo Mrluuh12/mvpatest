@@ -108,7 +108,7 @@ pode ser operadora na zona corporativa e apenas leitora em OT.
 
 ```bash
 pip install -e . && pip install pytest ruff
-python -m pytest -q      # 114 testes
+python -m pytest -q      # 118 testes
 python -m ruff check src tests
 ```
 
@@ -212,9 +212,40 @@ distinção que ele preserva: numa coleta com `alvos_falha = 367` e carimbo
 presente, o módulo funcionou e os alvos é que não responderam — *"perguntei e
 está ruim"*, não *"não consegui perguntar"*.
 
+## Interface (marco M1)
+
+O shell da aplicação e a lente do ativo, servidos pela própria API.
+
+```bash
+export PLATAFORMA_BANCO="postgresql+asyncpg://usuario@host:5432/plataforma"
+uvicorn plataforma.api:app --host 0.0.0.0 --port 8000
+```
+
+Sem etapa de build, de propósito: a barreira para alguém da equipe abrir e
+corrigir precisa ser baixa. Migrar para um framework depois é decisão local.
+
+A regra que atravessa a interface: **a tela nunca inventa número.** Um
+dispositivo pode estar em três situações, e as três são visualmente distintas:
+
+| Situação | O que significa |
+|---|---|
+| `responde` | sondado, respondeu |
+| `sem resposta` | sondado, não respondeu |
+| `não sondado` | fora da zona do coletor — nem foi perguntado |
+
+Confundir as duas últimas é o que transforma um relatório de disponibilidade em
+ficção. Quando falta latência, a célula mostra travessão, não zero.
+
+A aba **Cobertura** lê `/api/v1/sinais` e diz, para cada família do dicionário,
+se há coletor e — quando não há — por quê. Uma lacuna vira informação em vez de
+mistério.
+
+A aba **Módulos** mostra a plataforma se observando. Repare na distinção que ela
+preserva: um módulo com muitas falhas de alvo *e* carimbo de última coleta
+presente funcionou — foram os equipamentos que não responderam.
+
 ## O que ainda não está aqui
 
-- Interface: shell da aplicação e lente do ativo — a parte de M1 que falta
 - Canal B — ingestão de fatos estruturais e o grafo temporal (marco M2)
 - Módulo SNMP declarativo e séries históricas (marco M3)
 - Subsistema de ação (marco M4)
