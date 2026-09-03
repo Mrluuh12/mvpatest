@@ -108,7 +108,7 @@ pode ser operadora na zona corporativa e apenas leitora em OT.
 
 ```bash
 pip install -e . && pip install pytest ruff
-python -m pytest -q      # 55 testes
+python -m pytest -q      # 63 testes
 python -m ruff check src tests
 ```
 
@@ -116,9 +116,27 @@ Os testes são escritos para achar bug, não para passar: cada caso reproduz uma
 inconsistência que existe de verdade nos 723 ativos. Um deles é um teste de
 conservação — a rede de segurança contra o inventário encolher sem ninguém notar.
 
+## API de leitura
+
+Camada inicial sobre o inventário semeado. O repositório é um `Protocol`, não
+uma classe concreta: hoje é em memória, amanhã é Postgres, e a troca fica local.
+
+```bash
+PLATAFORMA_INVENTARIO=inventario.json uvicorn plataforma.api:app --reload
+```
+
+Rotas: `/api/v1/saude`, `/sinais`, `/resumo`, `/achados`, `/ativos`,
+`/ativos/{id}`, `/dispositivos`, `/distribuicao/{campo}`.
+
+A rota `/api/v1/sinais` existe por um motivo: cada família do dicionário declara
+se tem coletor e, quando não tem, **por quê**. É o que permite a interface dizer
+*"aguarda o coletor ICMP"* em vez de mostrar um traço mudo — ou, pior, um zero.
+
 ## O que ainda não está aqui
 
-- Coletor ICMP (a outra metade da Entrega 1)
+- Coletor ICMP (a outra metade do marco M1)
 - Canal B — ingestão de fatos estruturais e o grafo temporal
-- Persistência: hoje a saída é JSON, não Postgres
+- Persistência: hoje a saída é JSON, não Postgres. **É a lacuna que destrava M1**
+- Interface: o shell foi iniciado e removido — volta em M1, quando a
+  persistência existir e a forma da API estiver acordada
 - Subsistema de ação
