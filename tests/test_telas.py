@@ -68,6 +68,21 @@ class TestGuardarELer:
         assert lido.cartoes[0].largura == 3
 
     @pytest.mark.asyncio
+    async def test_conteudo_do_cartao_de_texto_sobrevive(self, conexao) -> None:
+        """O texto livre é o cartão onde vai procedimento e contato de
+        fornecedor. Perdê-lo no ida e volta esvaziaria o recurso."""
+        nota = "Torque: 650 N·m.\nFornecedor: ramal 4412."
+        await guardar(
+            conexao,
+            Arranjo(
+                escopo="frota:CA", contexto=Contexto.ATIVO,
+                cartoes=(Cartao(tipo=TipoCartao.TEXTO, opcoes={"conteudo": nota}),),
+            ),
+        )
+        lido = await ler(conexao, "frota:CA")
+        assert lido.cartoes[0].opcoes["conteudo"] == nota
+
+    @pytest.mark.asyncio
     async def test_salvar_de_novo_substitui(self, conexao) -> None:
         await guardar(conexao, arranjo("frota:CA", TipoCartao.RESUMO))
         await guardar(conexao, arranjo("frota:CA", TipoCartao.ALCANCE, TipoCartao.RESUMO))

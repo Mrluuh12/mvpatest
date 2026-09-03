@@ -511,12 +511,22 @@
       </div></section>`;
   }
 
-  const cxTexto = (c) => `<section class="cx">
-    <header><h2>${tit(c, "Observações")}</h2></header>
-    <div class="conteudo"><p style="margin:0;white-space:pre-wrap">${
-      esc((c.opcoes && c.opcoes.conteudo) || "")
-      || `<span class="nada" style="padding:0">sem conteúdo — edite a tela para escrever</span>`
-    }</p></div></section>`;
+  const cxTexto = (c, i) => {
+    const conteudo = (c.opcoes && c.opcoes.conteudo) || "";
+    // Em edição o próprio cartão é o campo. Um prompt() do navegador não
+    // aceita quebra de linha, e o que se escreve aqui é procedimento e
+    // contato de fornecedor — texto de várias linhas.
+    const corpo = S.editandoTela
+      ? `<textarea class="campo-texto" data-texto="${i}" rows="5"
+           placeholder="Procedimento, contato do fornecedor, lembrete…"
+           >${esc(conteudo)}</textarea>`
+      : `<p style="margin:0;white-space:pre-wrap">${
+          conteudo ? esc(conteudo)
+                   : `<span class="nada" style="padding:0">sem conteúdo — use Personalizar tela para escrever</span>`
+        }</p>`;
+    return `<section class="cx"><header><h2>${tit(c, "Observações")}</h2></header>
+      <div class="conteudo">${corpo}</div></section>`;
+  };
 
   //: Papéis que têm rádio. Só neles faz sentido reservar espaço para RSSI —
   //: num conversor CAN, "RSSI: aguardando coletor" é uma promessa falsa.
@@ -570,7 +580,7 @@
     dispositivos: (c, x) => tabelaDispositivos(c, x.dispositivos),
     identidade: (c, x) => cxIdentidade(c, x.dispositivo),
     imagens: (c, x) => cxImagens(c, x),
-    texto: (c) => cxTexto(c),
+    texto: (c, x, i) => cxTexto(c, i),
     auditoria: (c) => cxAuditoria(c),
     acoes: (c) => cxAcoes(c),
   };
@@ -581,7 +591,7 @@
     const cartoes = (S.arranjo?.cartoes || []).filter((c) => c.visivel !== false);
     return `<div class="tela">${cartoes.map((c, i) => {
       const desenhar = CARTOES[c.tipo];
-      const corpo = desenhar ? desenhar(c, x)
+      const corpo = desenhar ? desenhar(c, x, i)
         : `<section class="cx"><header><h2>${esc(c.tipo)}</h2></header>
            <div class="conteudo"><p class="nada">tipo de cartão desconhecido</p></div></section>`;
       const ferramentas = S.editandoTela ? `<div class="ferramentas">
@@ -959,6 +969,13 @@
           nota: "vale para todo dispositivo com este papel" },
       ]);
     }
+  });
+
+  document.body.addEventListener("input", (e) => {
+    const ta = e.target.closest("[data-texto]");
+    if (!ta || !S.arranjo) return;
+    const c = S.arranjo.cartoes[Number(ta.dataset.texto)];
+    if (c) c.opcoes = { ...(c.opcoes || {}), conteudo: ta.value };
   });
 
   let t;
