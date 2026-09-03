@@ -1,4 +1,4 @@
-# Plataforma TI + OT — marcos M0 e M1
+# Plataforma TI + OT — marcos M0, M1 e área ADM
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -108,7 +108,7 @@ pode ser operadora na zona corporativa e apenas leitora em OT.
 
 ```bash
 pip install -e . && pip install pytest ruff
-python -m pytest -q      # 118 testes
+python -m pytest -q      # 153 testes
 python -m ruff check src tests
 ```
 
@@ -267,6 +267,55 @@ travessia de caminho a explorar.
 A aba **Coleta** mostra a plataforma se observando. Repare na distinção que ela
 preserva: um módulo com muitas falhas de alvo *e* carimbo de última coleta
 presente funcionou — foram os equipamentos que não responderam.
+
+## Contas, autorização e auditoria
+
+A primeira conta é criada por quem instala. **Não há senha padrão embutida** —
+sistema que nasce com `admin/admin` nasce comprometido.
+
+```bash
+criar-admin ana --nome "Ana Souza"            # pergunta a senha
+criar-admin ot --zona ot_nivel3               # administrador só de OT
+```
+
+### A trava que não dá para esquecer de ligar
+
+A plataforma fica aberta **até existir a primeira conta** — antes disso não há
+como entrar, e exigir login trancaria a instalação para fora. Assim que existe
+um usuário, **tudo passa a exigir sessão, inclusive as leituras**: elas expõem
+o inventário inteiro, cada endereço e cada zona.
+
+### Autorização negada por padrão
+
+A concessão vale **onde foi concedida**. Um administrador da zona corporativa
+não é administrador de OT por consequência — e a mensagem de erro diz qual
+zona faltou.
+
+Duas decisões de zona que merecem estar escritas:
+
+- **Metadado de ativo é atributo de negócio, não de rede.** Editar a função de
+  negócio de um caminhão exige permissão na zona corporativa, mesmo que ele
+  tenha dispositivos em OT. Exigir OT ali seria burocracia sem ganho.
+- **Mover um dispositivo de zona exige permissão nas duas.** Sem isso, quem
+  administra só a corporativa poderia trazer um CLP para dentro dela e, em
+  seguida, agir sobre ele. É a porta de escalonamento mais óbvia deste modelo,
+  e ela fica fechada.
+
+### Auditoria
+
+Toda escrita grava a linha de auditoria **na mesma transação** da mudança: ou
+as duas acontecem, ou nenhuma. Não existe rota que altere ou apague uma linha
+de auditoria — auditoria que se pode editar não é auditoria.
+
+Inclusive **tentativa de login recusada** fica registrada, que é justamente o
+que se quer ver depois.
+
+### Senhas
+
+Nunca guardadas. Guarda-se `scrypt` com sal por usuário, e a comparação é em
+tempo constante. O token de sessão entregue ao navegador **não** é o que fica
+no banco: lá fica o SHA-256 dele, então vazamento do banco entrega resumos
+inúteis, não sessões válidas.
 
 ## O que ainda não está aqui
 

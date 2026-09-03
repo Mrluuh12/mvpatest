@@ -55,6 +55,7 @@
   const ZONA_SELO = { corporativa: "neutro", ot_nivel3: "ambar", ot_nivel2: "vermelho" };
 
   const S = {
+    eu: null, exigeLogin: false,
     ativos: [], sinais: [], achados: {}, resumo: {}, saude: {}, transicoes: [],
     sel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
@@ -83,6 +84,65 @@
     return c.vivos === 0 ? { cls: "mau", txt: "Sem resposta" } : { cls: "parcial", txt: "Atenção" };
   };
   const foto = (a) => (a ? `/imagens/${encodeURIComponent(a)}` : null);
+
+  /* ============================== entrada =============================== */
+  const pode = (permissao, zona = "corporativa") => {
+    if (!S.eu || !S.eu.autenticado) return false;
+    const MATRIZ = {
+      administrador: ["ver", "editar_painel", "executar_acao", "aprovar_acao",
+        "cadastrar_ativo", "editar_ativo", "gerir_modulos", "gerir_credenciais",
+        "gerir_usuarios", "gerir_dicionario"],
+      engenheiro: ["ver", "editar_painel", "executar_acao", "cadastrar_ativo",
+        "editar_ativo", "gerir_modulos"],
+      operador: ["ver", "editar_painel", "executar_acao"],
+      campo: ["ver", "executar_acao"],
+      leitor: ["ver"],
+    };
+    return (S.eu.concessoes || []).some(
+      (c) => c.zonas.includes(zona) && (MATRIZ[c.papel] || []).includes(permissao));
+  };
+
+  function telaEntrada(recusa) {
+    document.body.insertAdjacentHTML("beforeend", `
+      <div class="portao" id="portao"><div class="cartao-entrada">
+        <div class="cab">
+          <span class="emblema"><svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 3 21 20H3z"/></svg></span>
+          <span><b>FROTA MINA</b><span>plataforma de observabilidade</span></span>
+        </div>
+        <form id="form-entrada">
+          ${recusa ? `<div class="recusa">${esc(recusa)}</div>` : ""}
+          <div class="campo"><label for="ent-login">Usuário</label>
+            <input id="ent-login" name="login" autocomplete="username" required autofocus></div>
+          <div class="campo"><label for="ent-senha">Senha</label>
+            <input id="ent-senha" name="senha" type="password"
+              autocomplete="current-password" required></div>
+          <button class="bt cheio" type="submit" style="justify-content:center">Entrar</button>
+        </form>
+        <p class="obs">Cada alteração feita aqui fica registrada com o seu nome
+          e o horário.</p>
+      </div></div>`);
+    document.getElementById("form-entrada").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const d = new FormData(ev.target);
+      try {
+        await api("/api/v1/sessao", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ login: d.get("login"), senha: d.get("senha") }),
+        });
+        document.getElementById("portao").remove();
+        await iniciar();
+      } catch (e) {
+        document.getElementById("portao").remove();
+        telaEntrada(e.message);
+      }
+    });
+  }
+
+  async function sair() {
+    await fetch("/api/v1/sessao", { method: "DELETE" });
+    location.reload();
+  }
 
   /* =========================== envio de imagem ========================== */
   const seletor = $("seletor");
@@ -137,7 +197,12 @@
       item(ico.lista, "Achados", achados, achados === 0) +
       item(ico.modulo, "Módulos", Object.keys(S.saude).length, true) +
       `<button type="button">${ico.ajuda}<span class="rotulo">Ajuda</span></button>` +
-      `<button type="button">${ico.usuario}<span class="rotulo">Administrador</span>${ico.seta}</button>`;
+      (S.eu && S.eu.autenticado
+        ? `<button type="button" data-sair title="Encerrar sessão">${ico.usuario}
+             <span class="rotulo usuario-menu"><b>${esc(S.eu.nome)}</b>
+             <span>${esc((S.eu.concessoes[0] || {}).papel || "")} · sair</span></span></button>`
+        : `<button type="button" data-entrar>${ico.usuario}
+             <span class="rotulo">Entrar</span></button>`);
     $("site").textContent = `${r.ativos ?? 0} ativos · ${r.dispositivos ?? 0} dispositivos`;
   }
 
@@ -233,8 +298,9 @@
       </div>
       <div class="botoes">
         <button class="bt" data-foto-ativo>${ico.lapis} Imagem</button>
-        <button class="bt cheio" disabled title="Cadastro editável entra com a área ADM">
-          Editar Ativo</button>
+        <button class="bt cheio" data-editar-ativo
+          ${pode("editar_ativo") ? "" : 'disabled title="requer permissão de edição na zona corporativa"'}
+          >Editar Ativo</button>
       </div></div>`;
   }
 
@@ -442,6 +508,42 @@
                               : `<p class="nada">nenhum achado</p>`;
   };
 
+  const EDITAVEIS = [
+    { campo: "funcao_negocio", rotulo: "Função de negócio" },
+    { campo: "apelido", rotulo: "Apelido" },
+    { campo: "criticidade", rotulo: "Criticidade" },
+  ];
+
+  function modalEdicao(a) {
+    $("modal").innerHTML = `<div class="veu" data-fechar><div class="modal">
+      <h3>Editar ${esc(a.ativo_id)}</h3>
+      <form id="form-edicao" class="corpo">
+        <div class="campo"><label for="ed-campo">Campo</label>
+          <select id="ed-campo" name="campo">
+            ${EDITAVEIS.map((e) => `<option value="${e.campo}">${e.rotulo}</option>`).join("")}
+          </select></div>
+        <div class="campo"><label for="ed-valor">Valor</label>
+          <input id="ed-valor" name="valor" value="${esc(a.funcao_negocio)}" required></div>
+        <p style="font-size:11.5px;color:var(--apagado);margin:0">
+          O valor derivado automaticamente continua guardado; o seu passa a
+          prevalecer, e a alteração fica registrada com o seu nome.</p>
+        <div class="pe" style="margin:6px -18px -16px">
+          <button type="button" class="bt" data-fechar>Cancelar</button>
+          <button type="submit" class="bt cheio">Salvar</button></div>
+      </form></div></div>`;
+    document.getElementById("form-edicao").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const d = new FormData(ev.target);
+      try {
+        await api(`/api/v1/ativos/${encodeURIComponent(a.ativo_id)}/campo`, {
+          method: "PUT", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ campo: d.get("campo"), valor: d.get("valor") }),
+        });
+        fechar(); S.fichas.clear(); await atualizar();
+      } catch (e) { avisar("Não foi possível salvar", e.message); }
+    });
+  }
+
   /* =============================== fluxo ================================ */
   async function ficha(id) {
     if (!S.fichas.has(id)) S.fichas.set(id, await api(`/api/v1/ativos/${encodeURIComponent(id)}`));
@@ -484,6 +586,13 @@
   }
 
   document.body.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-sair]")) return sair();
+    if (e.target.closest("[data-entrar]")) return telaEntrada();
+    if (e.target.closest("[data-editar-ativo]")) {
+      const b = e.target.closest("[data-editar-ativo]");
+      if (!b.disabled) return modalEdicao((await ficha(S.sel)).ativo);
+      return;
+    }
     const raiz = e.target.closest("[data-raiz]");
     if (raiz) { const k = raiz.dataset.raiz;
                 S.abertos.has(k) ? S.abertos.delete(k) : S.abertos.add(k);
@@ -532,8 +641,18 @@
     t = setTimeout(() => { S.filtro = e.target.value.trim(); pintarArvore(); }, 120);
   });
 
-  atualizar().catch((erro) => {
+  async function iniciar() {
+    S.eu = await api("/api/v1/eu").catch(() => ({ autenticado: false }));
+    const saude = await api("/api/v1/saude").catch(() => ({}));
+    S.exigeLogin = !!saude.exige_login;
+    if (S.exigeLogin && !S.eu.autenticado) { telaEntrada(); return; }
+    await atualizar();
+  }
+
+  iniciar().catch((erro) => {
     $("centro").innerHTML = `<p class="nada">Sem resposta da API: ${esc(erro.message)}</p>`;
   });
-  setInterval(() => atualizar().catch(() => {}), 30000);
+  setInterval(() => {
+    if (!S.exigeLogin || (S.eu && S.eu.autenticado)) atualizar().catch(() => {});
+  }, 30000);
 })();

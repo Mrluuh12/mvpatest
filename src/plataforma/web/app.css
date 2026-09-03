@@ -318,3 +318,27 @@ td.nulo{color:var(--apagado)}
 .rodape{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
   padding:11px 20px;border-top:1px solid var(--linha);background:var(--cartao);
   font-size:11.5px;color:var(--apagado)}
+
+/* ============================== entrada ================================= */
+.portao{position:fixed;inset:0;background:var(--barra);display:grid;place-items:center;
+  z-index:80;padding:20px}
+.cartao-entrada{background:var(--cartao);border-radius:12px;box-shadow:0 20px 60px -20px rgba(0,0,0,.6);
+  width:min(370px,100%);overflow:hidden}
+.cartao-entrada .cab{display:flex;align-items:center;gap:12px;padding:22px 24px 16px}
+.cartao-entrada .cab .emblema{width:38px;height:38px;background:var(--barra)}
+.cartao-entrada .cab .emblema svg{color:#fff;width:17px;height:17px}
+.cartao-entrada .cab b{font-size:16px;font-weight:700;letter-spacing:.05em}
+.cartao-entrada .cab span{display:block;font-size:11px;color:var(--apagado)}
+.cartao-entrada form{padding:0 24px 20px;display:flex;flex-direction:column;gap:12px}
+.campo{display:flex;flex-direction:column;gap:5px}
+.campo label{font-size:11.5px;font-weight:600;color:var(--texto-2)}
+.campo input,.campo select{padding:9px 11px;font:inherit;font-size:13px;border-radius:6px;
+  border:1px solid var(--linha-forte);background:var(--cartao-2);color:var(--texto)}
+.campo input:focus{border-color:var(--azul)}
+.recusa{background:var(--vermelho-fundo);color:var(--vermelho);padding:9px 11px;
+  border-radius:6px;font-size:12.5px}
+.cartao-entrada .obs{padding:0 24px 20px;font-size:11px;color:var(--apagado);line-height:1.5}
+
+.usuario-menu{display:flex;flex-direction:column;align-items:flex-start;line-height:1.2}
+.usuario-menu b{font-size:12.5px}
+.usuario-menu span{font-size:10px;color:var(--barra-fraco)}

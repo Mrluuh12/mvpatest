@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 semear-inventario = "inventario.cli:main"
 semear-banco = "plataforma.cli:main"
+criar-admin = "plataforma.admin:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -39,3 +40,11 @@ extend-exclude = ["migracoes/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+# No FastAPI, chamar Depends/Cookie/File/Form/Query no default É a forma da
+# biblioteca declarar dependências. B008 aqui seria ruído, não achado.
+extend-immutable-calls = [
+  "fastapi.Depends", "fastapi.Cookie", "fastapi.File",
+  "fastapi.Form", "fastapi.Query", "fastapi.Body", "fastapi.Header",
+]

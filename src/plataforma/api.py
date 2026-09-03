@@ -22,11 +22,14 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi import Cookie, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from inventario.modelo import Permissao, Zona
+
+from .autorizacao import COOKIE, criar_rotas
 from .repositorio import AtivoLido, DispositivoLido, Repositorio, RepositorioMemoria
 
 VERSAO = "0.2.0"
@@ -81,6 +84,7 @@ class Fonte:
         self.carregado_em: datetime | None = None
         self.erro: str | None = None
         self._engine = None
+        self._tem_contas = False
 
     async def iniciar(self) -> None:
         if self.fixo:
@@ -109,6 +113,22 @@ class Fonte:
             # O repositório anterior continua servindo. Mas o erro fica à vista
             # em /saude: dado velho servido em silêncio é dado errado.
             self.erro = repr(erro)
+
+    async def tem_contas(self) -> bool:
+        """Existe ao menos uma conta? Guardado em memória depois do primeiro
+        ``True``: a resposta só muda uma vez na vida da instalação."""
+        if self._tem_contas:
+            return True
+        if self._engine is None:
+            return False
+        from sqlalchemy import func, select
+
+        from .db.esquema import usuario
+
+        async with self._engine.connect() as conexao:
+            total = await conexao.scalar(select(func.count()).select_from(usuario))
+        self._tem_contas = bool(total)
+        return self._tem_contas
 
     async def encerrar(self) -> None:
         if self._engine is not None:
@@ -158,6 +178,7 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         return {
             "versao": VERSAO,
             "inventario_carregado": bool(resumo.get("dispositivos")),
+            "exige_login": fonte._tem_contas,
             "carregado_em": fonte.carregado_em,
             "erro_de_recarga": fonte.erro,
             "resumo": resumo,
@@ -180,7 +201,8 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
             ...,
             description="disp:<chave> | papel:<papel> | ativo:<id> | frota:<sigla>",
         ),
-        arquivo: UploadFile = File(...),  # noqa: B008 - assim o FastAPI declara upload
+        arquivo: UploadFile = File(...),
+        sessao: str | None = Cookie(default=None, alias=COOKIE),
     ) -> dict:
         """Associa uma imagem a um sujeito.
 
@@ -190,13 +212,29 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         """
         if fonte._engine is None:
             raise HTTPException(status_code=503, detail="banco não configurado")
+        from .db import contas
         from .db.imagens import ImagemRecusada, guardar
+
+        async with fonte._engine.connect() as conexao:
+            conta = await contas.resolver(conexao, sessao)
+        try:
+            quem = contas.exigir(conta, Permissao.EDITAR_ATIVO, Zona.CORPORATIVA)
+        except contas.NaoAutenticado as erro:
+            raise HTTPException(status_code=401, detail="é preciso entrar") from erro
+        except contas.NaoAutorizado as erro:
+            raise HTTPException(status_code=403, detail=str(erro)) from erro
 
         conteudo = await arquivo.read()
         try:
             async with fonte._engine.begin() as conexao:
                 gravada = await guardar(
-                    conexao, sujeito, conteudo, arquivo.content_type or ""
+                    conexao, sujeito, conteudo, arquivo.content_type or "",
+                    enviado_por=quem.login,
+                )
+                await contas.registrar(
+                    conexao, "imagem.enviar", sujeito, login=quem.login,
+                    zona=Zona.CORPORATIVA,
+                    detalhe={"arquivo": gravada.arquivo, "bytes": gravada.bytes},
                 )
         except ImagemRecusada as erro:
             # 422 com o motivo: recusa que não explica custa uma tarde de alguém.
@@ -205,13 +243,28 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         return {"sujeito": gravada.sujeito, "arquivo": gravada.arquivo, "bytes": gravada.bytes}
 
     @app.delete("/api/v1/imagens/{sujeito:path}", tags=["imagens"])
-    async def remover_imagem(sujeito: str) -> dict:
+    async def remover_imagem(
+        sujeito: str, sessao: str | None = Cookie(default=None, alias=COOKIE)
+    ) -> dict:
         if fonte._engine is None:
             raise HTTPException(status_code=503, detail="banco não configurado")
+        from .db import contas
         from .db.imagens import remover
+
+        async with fonte._engine.connect() as conexao:
+            conta = await contas.resolver(conexao, sessao)
+        try:
+            quem = contas.exigir(conta, Permissao.EDITAR_ATIVO, Zona.CORPORATIVA)
+        except contas.NaoAutenticado as erro:
+            raise HTTPException(status_code=401, detail="é preciso entrar") from erro
+        except contas.NaoAutorizado as erro:
+            raise HTTPException(status_code=403, detail=str(erro)) from erro
 
         async with fonte._engine.begin() as conexao:
             existia = await remover(conexao, sujeito)
+            await contas.registrar(
+                conexao, "imagem.remover", sujeito, login=quem.login, zona=Zona.CORPORATIVA
+            )
         await fonte.recarregar()
         return {"removida": existia}
 
@@ -299,6 +352,35 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         if alvo is None:
             raise HTTPException(status_code=404, detail=f"dispositivo {chave!r} não existe")
         return alvo
+
+    #: Caminhos que precisam ficar abertos para a porta poder ser aberta.
+    ABERTOS = ("/api/v1/sessao", "/api/v1/saude", "/estatico", "/imagens", "/docs",
+               "/openapi.json", "/redoc")
+
+    @app.middleware("http")
+    async def exigir_login(pedido, seguir):
+        """A plataforma fica aberta **até existir a primeira conta**.
+
+        Antes disso não há como entrar, então exigir login trancaria a
+        instalação para fora. Depois disso, tudo exige sessão — inclusive as
+        leituras, porque elas expõem o inventário inteiro: cada endereço, cada
+        zona, cada equipamento. É a regra que não dá para esquecer de ligar.
+        """
+        caminho = pedido.url.path
+        if caminho == "/" or caminho.startswith(ABERTOS) or pedido.method == "OPTIONS":
+            return await seguir(pedido)
+        if fonte._engine is None or not await fonte.tem_contas():
+            return await seguir(pedido)
+
+        from .db import contas
+
+        async with fonte._engine.connect() as conexao:
+            conta = await contas.resolver(conexao, pedido.cookies.get(COOKIE))
+        if conta is None:
+            return JSONResponse({"detail": "é preciso entrar"}, status_code=401)
+        return await seguir(pedido)
+
+    app.include_router(criar_rotas(lambda: fonte._engine))
 
     if WEB.is_dir():
         app.mount("/estatico", StaticFiles(directory=WEB), name="estatico")

@@ -208,3 +208,73 @@ imagem = Table(
     Column("enviado_em", DateTime(timezone=True), nullable=False),
     Column("enviado_por", Text),
 )
+
+
+# --------------------------------------------------------------------------
+# Contas, sessões e auditoria
+# --------------------------------------------------------------------------
+
+
+usuario = Table(
+    "usuario",
+    metadata,
+    Column("login", Text, primary_key=True),
+    Column("nome", Text, nullable=False),
+    Column("senha_hash", Text, nullable=False),
+    Column("sal", Text, nullable=False),
+    Column("ativo", Boolean, nullable=False, server_default=text("true")),
+    Column("criado_em", DateTime(timezone=True), nullable=False),
+    Column("ultimo_acesso", DateTime(timezone=True)),
+)
+
+
+#: Um papel vale dentro de um conjunto de zonas, não na plataforma inteira.
+#: É a composição que faz o modelo servir numa mina: a mesma pessoa pode ser
+#: operadora na zona corporativa e apenas leitora em OT.
+concessao = Table(
+    "concessao",
+    metadata,
+    Column(
+        "login",
+        Text,
+        ForeignKey("usuario.login", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("papel", String(24), primary_key=True),
+    Column("zona", String(24), primary_key=True),
+)
+
+
+#: O token guardado é o **resumo** do que foi entregue ao navegador. Vazamento
+#: do banco não entrega sessão a ninguém.
+sessao = Table(
+    "sessao",
+    metadata,
+    Column("resumo", Text, primary_key=True),
+    Column(
+        "login", Text, ForeignKey("usuario.login", ondelete="CASCADE"), nullable=False
+    ),
+    Column("criada_em", DateTime(timezone=True), nullable=False),
+    Column("expira_em", DateTime(timezone=True), nullable=False),
+    Column("origem", Text),
+    Index("ix_sessao_login", "login"),
+)
+
+
+#: Somente escrita. Não existe rota que altere ou apague uma linha daqui —
+#: auditoria que se pode editar não é auditoria.
+auditoria = Table(
+    "auditoria",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("em", DateTime(timezone=True), nullable=False),
+    Column("login", Text),
+    Column("acao", String(48), nullable=False),
+    Column("sujeito", Text, nullable=False),
+    Column("zona", String(24)),
+    Column("detalhe", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("origem", Text),
+    Index("ix_auditoria_em", "em"),
+    Index("ix_auditoria_sujeito", "sujeito"),
+    Index("ix_auditoria_login", "login"),
+)
