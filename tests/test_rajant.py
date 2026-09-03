@@ -27,6 +27,15 @@ from plataforma.modulos.rajant import (
     normalizar,
 )
 
+#: Colisões reais do cadastro: 10.188.99.192 é de dois tratores e
+#: PF-4701-RADIO RJT é o nome de dois rádios.
+DISPUTADOS = [
+    {"chave": "nome:TT-3708", "nome": "TT-3708-RADIO RJT", "ip": "10.188.99.192"},
+    {"chave": "nome:TT-3802", "nome": "TT-3802-RADIO RJT", "ip": "10.188.99.192"},
+    {"chave": "mac:AA", "nome": "PF-4701-RADIO RJT", "ip": "10.188.99.50"},
+    {"chave": "mac:BB", "nome": "PF-4701-RADIO RJT", "ip": "10.188.99.51"},
+]
+
 ALVOS = [
     {"chave": "mac:02:D0:12:26:F5:B5", "nome": "CA-1001-RADIO  RJT", "ip": "10.188.99.1"},
     {"chave": "mac:02:D0:12:26:F5:C0", "nome": "CA-1002-RADIO RJT", "ip": "10.188.99.2"},
@@ -100,12 +109,41 @@ class TestJuncao:
         j = casar([serie("CA-1001-RADIO RJT", "10.0.0.9", 1)], ALVOS)
         assert j.por_chave["CA-1001-RADIO RJT@10.0.0.9"] == "mac:02:D0:12:26:F5:B5"
 
+    def test_ip_disputado_nao_escolhe_um_no_chute(self) -> None:
+        """No cadastro real, 10.188.99.192 é de dois tratores. Um dicionário
+        por compreensão deixaria o último vencer, e a temperatura de um
+        apareceria pendurada no outro. Número errado é pior que ausente."""
+        j = casar([serie("QUALQUER", "10.188.99.192", 1)], DISPUTADOS)
+        assert j.por_chave == {}
+        assert j.ambiguos == {"QUALQUER@10.188.99.192"}
+        assert j.sem_inventario == set(), "não é rádio desconhecido, é cadastro duplicado"
+
+    def test_nome_disputado_tambem_recusa(self) -> None:
+        """Oito nomes canônicos se repetem entre rádios no cadastro real."""
+        j = casar([serie("PF-4701-RADIO RJT", "10.0.0.1", 1)], DISPUTADOS)
+        assert j.por_chave == {}
+        assert j.ambiguos == {"PF-4701-RADIO RJT@10.0.0.1"}
+
+    def test_o_nome_desempata_o_ip_disputado(self) -> None:
+        """IP ambíguo não encerra a busca: se o nome resolve, casa."""
+        j = casar([serie("TT-3802-RADIO RJT", "10.188.99.192", 1)], DISPUTADOS)
+        assert j.por_chave == {"TT-3802-RADIO RJT@10.188.99.192": "nome:TT-3802"}
+        assert j.ambiguos == set()
+
+    def test_o_mesmo_ip_duas_vezes_no_mesmo_equipamento_nao_e_disputa(self) -> None:
+        """Duas linhas de identificador para o mesmo dispositivo não são
+        conflito — só repetição."""
+        repetido = [ALVOS[0], dict(ALVOS[0])]
+        j = casar([serie("CA-1001", "10.188.99.1", 1)], repetido)
+        assert j.por_chave and not j.ambiguos
+
     def test_radio_fora_do_inventario_e_contado_nao_engolido(self) -> None:
         """O exportador descobre pela malha e acha rádio que a planilha não
         tem. Isso é achado de inventário — só some se for engolido."""
         j = casar([serie("BC-DESCONHECIDO", "10.50.0.1", 1)], ALVOS)
         assert j.por_chave == {}
         assert j.sem_inventario == {"BC-DESCONHECIDO@10.50.0.1"}
+        assert j.ambiguos == set()
 
     def test_ip_vence_nome_quando_os_dois_existem(self) -> None:
         """O nome vem de Config.General.name, digitado no próprio rádio; o IP
@@ -208,6 +246,16 @@ class TestColeta:
         r = await modulo({"rajant_temperatura_c": [serie("CA-1001", "10.188.99.1", float("nan"))]}
                          ).coletar(ALVOS)
         assert [o for o in r.observacoes if o.metrica == "disp_temperatura_c"] == []
+
+    async def test_disputa_de_cadastro_aparece_nas_recusas(self) -> None:
+        """Descartar a leitura é certo; descartar calado não é. Quem lê a aba
+        de coleta precisa ver qual cadastro corrigir."""
+        m = ModuloRajant("http://p:9090",
+                         transporte=responder(
+                             {"rajant_online": [serie("X", "10.188.99.192", 1)]}))
+        r = await m.coletar(DISPUTADOS)
+        assert r.observacoes == ()
+        assert any("chave disputada" in x and "10.188.99.192" in x for x in r.rejeitadas)
 
     async def test_a_juncao_fica_disponivel_para_a_tela(self) -> None:
         m = modulo({"rajant_online": [serie("BC-NOVO", "10.50.0.1", 1)]})

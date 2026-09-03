@@ -203,31 +203,72 @@ class Prometheus:
 
 @dataclass
 class Juncao:
-    """Resultado de casar as séries com o inventário.
+    """Resultado de casar as séries do Prometheus com o inventário.
 
-    ``sem_inventario`` não é erro: o exportador descobre pela malha e acha
-    rádio que a planilha não tem. É achado de inventário, e some se for
-    engolido — por isso volta contado.
+    Três desfechos, e nenhum deles é silêncio:
+
+    ``por_chave``   casou, e diz por qual critério (IP ou nome).
+    ``ambiguos``    o inventário tem o equipamento, mas **mais de um** responde
+                    pela mesma chave. Atribuir a leitura a um deles no chute
+                    seria pendurar uma temperatura real no caminhão errado —
+                    número errado é pior que número ausente, porque alguém age
+                    sobre ele.
+    ``sem_inventario``
+                    o exportador descobriu pela malha um rádio que a planilha
+                    não tem. É achado de inventário, e só some se for engolido.
     """
 
     por_chave: dict[str, str]
     sem_inventario: set[str]
+    ambiguos: set[str]
     por_ip: int = 0
     por_nome: int = 0
+
+    def absorver(self, outra: Juncao) -> None:
+        self.por_chave.update(outra.por_chave)
+        self.sem_inventario |= outra.sem_inventario
+        self.ambiguos |= outra.ambiguos
+        self.por_ip += outra.por_ip
+        self.por_nome += outra.por_nome
+
+
+def _indice(pares: list[tuple[str, str]]) -> tuple[dict[str, str], set[str]]:
+    """Índice que **recusa** chave ambígua em vez de deixar a última vencer.
+
+    Um ``{k: v for ...}` teria descartado o primeiro de cada par calado. No
+    inventário real isso são 3 IPs e 8 nomes disputados por rádios diferentes
+    — equipamentos que nunca receberiam leitura, sem nada indicando por quê.
+    """
+    mapa: dict[str, str] = {}
+    ambiguos: set[str] = set()
+    for busca, valor in pares:
+        if not busca:
+            continue
+        if busca in mapa and mapa[busca] != valor:
+            ambiguos.add(busca)
+        mapa[busca] = valor
+    for chave in ambiguos:
+        mapa.pop(chave, None)
+    return mapa, ambiguos
 
 
 def casar(series: list[dict], alvos: list[dict[str, Any]]) -> Juncao:
     """Casa o rótulo do Prometheus com a chave do inventário.
 
-    IP primeiro: entre os 167 rádios do cadastro, 160 endereços são únicos, e
-    é o rótulo que o exportador sempre publica. O nome é a queda: ele vem de
-    ``Config.General.name``, configurado no próprio rádio, e nada garante que
-    alguém o tenha digitado igual à planilha.
-    """
-    por_ip = {a["ip"]: a["chave"] for a in alvos if a.get("ip")}
-    por_nome = {normalizar(a.get("nome", "")): a["chave"] for a in alvos if a.get("nome")}
+    IP primeiro, confirmado com o usuário: o endereço que o exportador publica
+    é o mesmo da planilha. O nome é a queda, porque vem de
+    ``Config.General.name``, digitado no próprio rádio, e nada garante que
+    alguém o tenha escrito igual ao cadastro.
 
-    j = Juncao(por_chave={}, sem_inventario=set())
+    Quando o IP é disputado, o nome ainda pode desempatar — e só quando os dois
+    falham a série vira achado, nunca sumiço.
+    """
+    por_ip, ips_ambiguos = _indice([(a.get("ip", ""), a["chave"]) for a in alvos])
+    por_nome, nomes_ambiguos = _indice(
+        [(normalizar(a.get("nome", "")), a["chave"]) for a in alvos]
+    )
+
+    j = Juncao(por_chave={}, sem_inventario=set(), ambiguos=set())
     for serie in series:
         rotulos = serie.get("metric", {})
         ip, bc = rotulos.get("ip", ""), rotulos.get("bc", "")
@@ -240,6 +281,8 @@ def casar(series: list[dict], alvos: list[dict[str, Any]]) -> Juncao:
         elif chave := por_nome.get(normalizar(bc)):
             j.por_chave[identidade] = chave
             j.por_nome += 1
+        elif ip in ips_ambiguos or normalizar(bc) in nomes_ambiguos:
+            j.ambiguos.add(identidade)
         else:
             j.sem_inventario.add(identidade)
     return j
@@ -265,7 +308,7 @@ class ModuloRajant:
         inicio = time.perf_counter()
         brutas: list[Observacao] = []
         recusas: list[str] = []
-        juncao = Juncao(por_chave={}, sem_inventario=set())
+        juncao = Juncao(por_chave={}, sem_inventario=set(), ambiguos=set())
         consultas_falhas = 0
 
         async with httpx.AsyncClient(transport=self.transporte) as cliente:
@@ -280,10 +323,7 @@ class ModuloRajant:
                     continue
 
                 parcial = casar(series, alvos)
-                juncao.por_chave.update(parcial.por_chave)
-                juncao.sem_inventario |= parcial.sem_inventario
-                juncao.por_ip += parcial.por_ip
-                juncao.por_nome += parcial.por_nome
+                juncao.absorver(parcial)
 
                 # Um BreadCrumb tem um IPv4 por rádio: o mesmo equipamento
                 # aparece em várias séries, com IPs diferentes. O exportador
@@ -327,9 +367,16 @@ class ModuloRajant:
 
         self.ultima_juncao = juncao
         observacoes, rejeitadas = filtrar_observacoes(brutas)
+        avisos = tuple(
+            f"chave disputada no cadastro, leitura descartada: {e}"
+            for e in sorted(juncao.ambiguos)
+        )
         # Alvo do módulo é o Prometheus, mas o que interessa relatar é
         # cobertura: rádio do inventário que nenhuma consulta alcançou.
         alcancados = set(juncao.por_chave.values())
+        # Equipamento com série no Prometheus mas chave disputada conta como
+        # não lido — porque não foi lido. A ambiguidade fica em `ambiguos`
+        # para a tela poder dizer qual é o cadastro a corrigir.
         falhas = len([a for a in alvos if a["chave"] not in alcancados])
         if consultas_falhas == len(CONSULTAS):
             # Prometheus fora do ar: nenhum rádio caiu, o leitor é que não leu.
@@ -339,7 +386,7 @@ class ModuloRajant:
             alvos_total=len(alvos),
             alvos_falha=falhas,
             duracao_s=time.perf_counter() - inicio,
-            rejeitadas=tuple(recusas) + rejeitadas,
+            rejeitadas=tuple(recusas) + avisos + rejeitadas,
         )
 
 

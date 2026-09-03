@@ -14,6 +14,8 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
 
+from inventario.modelo import Zona
+from plataforma.coletor import alvos_do_inventario
 from plataforma.db.coleta import disponibilidade, gravar_coleta
 from plataforma.db.esquema import estado, saude_modulo, transicao
 from plataforma.db.repositorio_pg import apagar_esquema, criar_engine, criar_esquema
@@ -231,3 +233,71 @@ class TestDisponibilidade:
         """Número inventado aqui vira um SLA indefensável."""
         async with engine.connect() as c:
             assert await disponibilidade(c, "nunca-visto", T0) is None
+
+
+class TestSelecaoDeAlvos:
+    """Quem o coletor entrega a cada módulo.
+
+    Duas regras se cruzam aqui, e a segunda é a que mais importa: a zona
+    limita o que um módulo **alcança**, e por isso não se aplica igual a um
+    módulo que nunca abre conexão com o equipamento. O que não se dobra em
+    caso nenhum é a exclusão das zonas proibidas.
+    """
+
+    async def _semear(self, engine) -> None:
+        from plataforma.db.esquema import dispositivo, identificador
+
+        linhas = [
+            ("k-corp", "RADIO-CORP", "radio_mesh", "corporativa", "10.0.0.1"),
+            ("k-ot3", "RADIO-OT3", "radio_mesh", "ot_nivel3", "10.0.0.2"),
+            ("k-clp", "CLP-OT2", "plc", "ot_nivel2", "10.0.0.3"),
+            ("k-sw", "SWITCH", "switch", "corporativa", "10.0.0.4"),
+        ]
+        async with engine.begin() as c:
+            for chave, nome, papel, zona, ip in linhas:
+                await c.execute(
+                    dispositivo.insert().values(
+                        chave=chave, nome_bruto=nome, nome_canonico=nome,
+                        papel=papel, zona=zona,
+                    )
+                )
+                await c.execute(
+                    identificador.insert().values(
+                        dispositivo_chave=chave, tipo="ip", valor=ip
+                    )
+                )
+
+    async def test_modulo_que_conecta_fica_preso_a_sua_zona(self, engine) -> None:
+
+        await self._semear(engine)
+        alvos = await alvos_do_inventario(engine, Zona.CORPORATIVA, ("radio_mesh",))
+        assert {a["chave"] for a in alvos} == {"k-corp"}
+
+    async def test_modulo_de_sistema_cobre_alem_da_propria_zona(self, engine) -> None:
+        """Ele lê um Prometheus e atribui o que leu; nunca toca no rádio. Zona
+        limita alcance, e quem não alcança não pode ser limitado por onde o
+        equipamento está — o dado cruzou a fronteira no exportador."""
+
+        await self._semear(engine)
+        alvos = await alvos_do_inventario(
+            engine, Zona.CORPORATIVA, ("radio_mesh",), conecta_no_alvo=False
+        )
+        assert {a["chave"] for a in alvos} == {"k-corp", "k-ot3"}
+
+    async def test_zona_proibida_fica_de_fora_ate_do_modulo_de_sistema(
+        self, engine
+    ) -> None:
+        """A linha que não se move: nem atribuir leitura a um controlador de
+        processo a plataforma faz."""
+
+        await self._semear(engine)
+        alvos = await alvos_do_inventario(engine, Zona.CORPORATIVA, conecta_no_alvo=False)
+        assert "k-clp" not in {a["chave"] for a in alvos}
+
+    async def test_papel_declarado_recorta_os_alvos(self, engine) -> None:
+        """Sem isso o módulo de rádio reportaria o switch como falha de
+        cobertura a cada ciclo."""
+
+        await self._semear(engine)
+        alvos = await alvos_do_inventario(engine, Zona.CORPORATIVA)
+        assert {a["chave"] for a in alvos} == {"k-corp", "k-sw"}

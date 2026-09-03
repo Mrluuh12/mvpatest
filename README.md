@@ -383,6 +383,41 @@ justamente o enlace prestes a cair. Cada observação agregada carrega o rótulo
 `agregacao`, e a ficha o exibe em português — *pior entre os vizinhos* — porque
 `rf_snr_db` num PtP é o enlace e aqui é o pior de N.
 
+### A junção recusa chave ambígua
+
+O IP é a chave, confirmado com quem opera: o endereço que o exportador publica
+é o mesmo da planilha. Mas o cadastro real tem **3 IPs e 8 nomes canônicos
+disputados por rádios diferentes**:
+
+| Chave | Disputada por |
+|---|---|
+| `10.188.99.192` | TT-3708-RADIO RJT, TT-3802-RADIO RJT |
+| `10.188.99.194` | PA-5801-RADIO RJT, TT-3710-RADIO RJT |
+| `10.188.97.19` | ERM-01-INFINET, ERM-29-INFINET |
+
+Um `{ip: chave for ...}` teria deixado a última vencer, e a temperatura de um
+trator apareceria pendurada no outro sem nada indicando por quê. **Número
+errado é pior que número ausente, porque alguém age sobre ele.** O índice
+recusa a chave disputada; o nome ainda pode desempatar; e o que não casa vira
+recusa nomeada — *"chave disputada no cadastro, leitura descartada:
+TT-3708@10.188.99.192"* — que diz exatamente qual cadastro corrigir.
+
+### Zona limita alcance, não atribuição
+
+O módulo declara `Alvo.SISTEMA`: fala com **um** sistema — o Prometheus — e
+nunca abre conexão com um rádio. Por isso a lista de alvos dele não é
+recortada pela zona do coletor: zona existe para impedir que um coletor
+corporativo *alcance* equipamento de OT, e quem nunca alcança não pode ser
+limitado por onde o equipamento está. O dado já cruzou a fronteira antes, no
+exportador — que é onde essa decisão pertence.
+
+Na prática isso são **22 rádios de ot_nivel3** que sairiam de zero para
+cobertos sem nenhum processo novo dentro da OT: 123 alvos viram 145.
+
+As zonas proibidas continuam de fora em qualquer caso, e essa linha não se
+move por tipo de módulo: nem atribuir leitura a um controlador de processo a
+plataforma faz.
+
 ### Onde a leitura para
 
 A tabela `leitura` guarda **a última** leitura de cada par (sujeito, métrica).

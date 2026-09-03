@@ -21,12 +21,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from inventario.modelo import Zona
+from inventario.modelo import ZONAS_PROIBIDAS, Zona
 
 from .db.coleta import gravar_coleta
 from .db.esquema import dispositivo, identificador
 from .db.repositorio_pg import criar_engine
-from .modulos.contrato import ResultadoColeta
+from .modulos.contrato import Alvo, ResultadoColeta
 from .modulos.icmp import ModuloIcmp
 from .modulos.rajant import ModuloRajant
 from .modulos.registro import Agendador, Registro
@@ -39,12 +39,26 @@ VAR_PROMETHEUS = "PLATAFORMA_PROMETHEUS"
 
 
 async def alvos_do_inventario(
-    engine: AsyncEngine, zona: Zona, papeis: tuple[str, ...] = ()
+    engine: AsyncEngine,
+    zona: Zona,
+    papeis: tuple[str, ...] = (),
+    conecta_no_alvo: bool = True,
 ) -> list[dict[str, Any]]:
-    """Dispositivos da zona do coletor que têm endereço IP.
+    """Dispositivos que o módulo deve cobrir, com endereço IP.
 
     O filtro por zona não é conveniência: é o que impede um coletor da rede
     corporativa sondar equipamento de OT porque alguém cadastrou o IP errado.
+
+    ``conecta_no_alvo=False`` desliga esse filtro — e só ele. Vale para módulo
+    de ``Alvo.SISTEMA``, que **não abre conexão com o equipamento**: fala com
+    um sistema só (o Prometheus, um historiador, uma API de fabricante) e
+    atribui o que lê. Zona limita o que o módulo *alcança*; quem nunca alcança
+    o equipamento não pode ser limitado por onde ele está. O dado já cruzou a
+    fronteira antes, no exportador, que é onde essa decisão pertence.
+
+    As zonas proibidas continuam de fora em qualquer caso. Essa linha não se
+    move por tipo de módulo: nem atribuir leitura a um controlador de processo
+    a plataforma faz.
 
     ``papeis`` restringe ao que o módulo declara cobrir. Sem isso, um módulo
     de rádio receberia todos os alvos da zona e reportaria como falha de
@@ -59,8 +73,13 @@ async def alvos_do_inventario(
         )
         .join(identificador, identificador.c.dispositivo_chave == dispositivo.c.chave)
         .where(identificador.c.tipo == "ip")
-        .where(dispositivo.c.zona == zona.value)
     )
+    if conecta_no_alvo:
+        consulta = consulta.where(dispositivo.c.zona == zona.value)
+    else:
+        consulta = consulta.where(
+            dispositivo.c.zona.notin_([z.value for z in ZONAS_PROIBIDAS])
+        )
     if papeis:
         consulta = consulta.where(dispositivo.c.papel.in_(list(papeis)))
     async with engine.connect() as conexao:
@@ -82,12 +101,15 @@ class Coletor:
         self.ultimo: dict[str, dict[str, int]] = {}
 
     async def _fonte(self, nome: str) -> list[dict[str, Any]]:
-        papeis = (
-            self.registro.obter(nome).manifesto.papeis_alvo
-            if nome in self.registro
-            else ()
+        if nome not in self.registro:
+            return await alvos_do_inventario(self.engine, self.zona)
+        manifesto = self.registro.obter(nome).manifesto
+        return await alvos_do_inventario(
+            self.engine,
+            self.zona,
+            manifesto.papeis_alvo,
+            conecta_no_alvo=manifesto.alvo is not Alvo.SISTEMA,
         )
-        return await alvos_do_inventario(self.engine, self.zona, papeis)
 
     async def _escoadouro(self, nome: str, resultado: ResultadoColeta) -> None:
         async with self.engine.begin() as conexao:
