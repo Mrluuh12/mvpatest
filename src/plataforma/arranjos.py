@@ -75,8 +75,9 @@ CATALOGO: tuple[DefCartao, ...] = (
         descricao="Diagrama do que está embarcado, com imagem e estado.",
     ),
     DefCartao(
-        tipo=TipoCartao.TELEMETRIA, titulo_padrao="Telemetria", contextos=(A, D),
-        descricao="Lista de leituras; o que não tem coletor diz por quê.",
+        tipo=TipoCartao.TELEMETRIA, titulo_padrao="Medições", contextos=(A, D),
+        descricao="O que foi de fato medido: alcance, latência, perda, "
+                  "composição e quando foi a última leitura.",
         opcoes=("linhas",),
     ),
     DefCartao(
@@ -133,6 +134,16 @@ class Arranjo(BaseModel):
     contexto: Contexto
     cartoes: tuple[Cartao, ...]
 
+    def indisponiveis(self) -> list[TipoCartao]:
+        """Cartões que o catálogo ainda não sustenta.
+
+        Um arranjo pode carregá-los — quem já configurou a tela não deve
+        perdê-la quando um cartão sai do ar —, mas o padrão embutido não pode:
+        botão apagado que ninguém consegue tirar nem repor é peso morto em
+        toda instalação nova.
+        """
+        return [c.tipo for c in self.cartoes if not POR_TIPO[c.tipo].disponivel]
+
     @field_validator("cartoes")
     @classmethod
     def _nao_vazio(cls, v: tuple[Cartao, ...]) -> tuple[Cartao, ...]:
@@ -174,8 +185,7 @@ ARRANJO_ATIVO_PADRAO = Arranjo(
         Cartao(tipo=TipoCartao.ALCANCE, largura=1),
         Cartao(tipo=TipoCartao.TELEMETRIA, largura=1),
         Cartao(tipo=TipoCartao.COMPONENTES, largura=4),
-        Cartao(tipo=TipoCartao.TRANSICOES, largura=2),
-        Cartao(tipo=TipoCartao.ACOES, largura=2),
+        Cartao(tipo=TipoCartao.TRANSICOES, largura=4),
         Cartao(tipo=TipoCartao.DISPOSITIVOS, largura=4),
     ),
 )

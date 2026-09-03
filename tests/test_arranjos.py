@@ -97,6 +97,19 @@ class TestContexto:
     def test_os_padroes_embutidos_sao_validos(self, padrao) -> None:
         padrao.validar_contexto()
 
+    @pytest.mark.parametrize(
+        "padrao", [ARRANJO_ATIVO_PADRAO, ARRANJO_DISPOSITIVO_PADRAO],
+        ids=["ativo", "dispositivo"],
+    )
+    def test_o_padrao_nao_carrega_cartao_indisponivel(self, padrao) -> None:
+        """Cartão que o catálogo recusa acrescentar não pode vir de fábrica.
+
+        Era o caso das Ações Rápidas: quatro botões desativados em toda tela de
+        ativo, que ninguém conseguia repor porque o catálogo os marca como
+        indisponíveis. Peso morto que só some quando o marco M4 chegar.
+        """
+        assert padrao.indisponiveis() == []
+
 
 class TestCartao:
     def test_titulo_cai_no_catalogo(self) -> None:

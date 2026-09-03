@@ -378,30 +378,45 @@
       </div></div></section>`;
   }
 
+  /** Só o que foi de fato medido.
+   *
+   *  Antes este cartão reservava linha para RSSI, interface e temperatura,
+   *  cada uma dizendo "aguarda o módulo tal". Numa tela isso é informação; em
+   *  145 telas, repetido para sempre, é ruído que ensina a ignorar o cartão. O
+   *  que a plataforma **não** coleta continua sendo dito — uma vez, na aba
+   *  Cobertura, que é o lugar feito para isso e está a um clique daqui.
+   */
   function cxTelemetria(c0, ds) {
-    const vivos = ds.filter((d) => d.alcancavel);
-    const lats = vivos.map((d) => d.latencia_ms).filter((v) => v !== null && v !== undefined);
-    const media = lats.length ? (lats.reduce((a, b) => a + b, 0) / lats.length).toFixed(2) + " ms" : null;
+    const sondados = ds.filter((d) => d.alcancavel !== null && d.alcancavel !== undefined);
+    const vivos = sondados.filter((d) => d.alcancavel);
+    const num = (xs) => xs.filter((v) => v !== null && v !== undefined);
+    const lats = num(vivos.map((d) => d.latencia_ms));
+    const perdas = num(sondados.map((d) => d.perda_pct));
+    const med = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
     const visto = ds.map((d) => d.visto_em).filter(Boolean).sort().pop();
-    const semColetor = (fam) => {
-      const s = S.sinais.find((x) => x.familia === fam);
-      return s && !s.disponivel ? s.motivo : null;
-    };
+    const zonas = [...new Set(ds.map((d) => d.zona))];
+    const papeis = new Set(ds.map((d) => d.papel));
+
     const linha = (icone, rotulo, valor, motivo) => `<div class="l">${icone}${rotulo}
       ${valor !== null && valor !== undefined
         ? `<span class="v">${esc(valor)}</span>`
         : `<span class="v nulo">${esc(motivo || "—")}</span>`}</div>`;
-    return `<section class="cx"><header><h2>${tit(c0, "Telemetria")}</h2></header>
+    return `<section class="cx"><header><h2>${tit(c0, "Medições")}</h2></header>
       <div class="conteudo"><div class="telem">
-        ${linha(ico.raio, "Respondendo", `${vivos.length} de ${ds.length}`)}
-        ${linha(ico.relogio, "Latência média", media, "sem resposta")}
-        ${linha(ico.rede, "Zonas distintas", [...new Set(ds.map((d) => d.zona))].length)}
-        ${linha(ico.onda, "RSSI", null, semColetor("rf"))}
-        ${linha(ico.caixa, "Interface", null, semColetor("interface"))}
-        ${linha(ico.escudo, "Temperatura", null, semColetor("dispositivo"))}
+        ${linha(ico.raio, "Respondendo",
+          sondados.length ? `${vivos.length} de ${sondados.length}` : null, "nada sondado")}
+        ${linha(ico.relogio, "Latência média",
+          lats.length ? med(lats).toFixed(2) + " ms" : null, "sem resposta")}
+        ${linha(ico.relogio, "Pior latência",
+          lats.length ? Math.max(...lats).toFixed(2) + " ms" : null, "sem resposta")}
+        ${linha(ico.onda, "Perda média",
+          perdas.length ? med(perdas).toFixed(0) + "%" : null)}
+        ${linha(ico.caixa, "Composição",
+          `${papeis.size} ${papeis.size === 1 ? "papel" : "papéis"}`)}
+        ${linha(ico.rede, "Zonas", zonas.length > 1 ? `${zonas.length} distintas` : zonas[0])}
         ${linha(ico.relogio, "Última leitura", visto ? hora(visto) : null, "nunca sondado")}
       </div></div>
-      <div class="pe"><button data-aba-ir="cobertura">Ver cobertura por família</button></div>
+      <div class="pe"><button data-aba-ir="cobertura">O que ainda não é coletado</button></div>
     </section>`;
   }
 

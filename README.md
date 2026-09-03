@@ -268,6 +268,21 @@ A aba **Coleta** mostra a plataforma se observando. Repare na distinção que el
 preserva: um módulo com muitas falhas de alvo *e* carimbo de última coleta
 presente funcionou — foram os equipamentos que não responderam.
 
+### O cartão diz o que mediu, não o que falta
+
+O cartão de medições do ativo mostra só o que foi de fato medido: alcance,
+latência média e pior, perda, composição e a hora da última leitura. Ele já
+reservou linha para RSSI, interface e temperatura, cada uma dizendo "aguarda o
+módulo tal". Numa tela isso é informação; em 145 telas, repetido para sempre,
+é ruído que ensina a ignorar o cartão.
+
+O que a plataforma **não** coleta continua sendo dito — uma vez, na aba
+Cobertura, que é o lugar feito para isso, com um atalho no pé do cartão. Pela
+mesma razão, as Ações Rápidas saíram do arranjo padrão: quatro botões
+desativados que o catálogo nem deixa repor são peso morto em toda instalação
+nova. O tipo continua no catálogo, com o motivo à vista, e volta a ser
+oferecido quando o subsistema de ação existir.
+
 ### Ficha do dispositivo
 
 Clicar num componente — na tabela ou no diagrama — abre a ficha daquele
