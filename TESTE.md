@@ -145,6 +145,29 @@ export PLATAFORMA_SNMP_CREDENCIAL=snmp-mina
 python -m plataforma.coletor --zona corporativa --uma-vez --modulo snmp
 ```
 
+### 5.4 Syslog e traps — o canal que escuta em vez de perguntar
+
+Todo o resto é *pull*. Este é *push*: o equipamento manda quando quer.
+
+```bash
+# 514 exige privilégio; para testar sem root, use 5140 e aponte um
+# equipamento (ou o `logger`) para essa porta.
+receptor-syslog --zona corporativa --porta 5140
+
+# um teste rápido, da própria máquina:
+logger -n 127.0.0.1 -P 5140 -p local7.err "teste da plataforma"
+```
+
+Um receptor por zona, como o coletor — mas por outro motivo. Ele não alcança
+nada; senta numa porta e recebe. Se um receptor da rede corporativa receber
+mensagem cujo IP pertence a equipamento de OT, o evento é **marcado**
+(`ip_de_outra_zona`) em vez de recusado: ou a rede está fazendo ponte onde não
+deveria, ou alguém está forjando, e as duas coisas são achado.
+
+> Syslog sobre UDP **não autentica nada**. Qualquer um na rede pode mandar uma
+> mensagem dizendo ser qualquer IP. Por isso todo evento carrega `confianca`, e
+> a tela diz isso em letras miúdas: um evento não é prova, é o que alguém disse.
+
 ## 6. Rodar a suíte
 
 ```bash
@@ -183,7 +206,12 @@ as pessoas param de rodar.
 4. **O gráfico não inventa.** Ponha um cartão de gráfico numa métrica de SNMP
    (`iface_bytes_rx`, por exemplo). Ele deve **dizer que não tem série**, não
    desenhar uma linha reta a partir da última leitura.
-5. **O relatório não esconde o que não sabe.** Abra Relatórios →
+5. **Uma tempestade de syslog não derruba a plataforma.** Mande 400 mensagens
+   de uma vez para o receptor. Ele deve gravar até o limite (120/min por
+   origem), descartar o resto e **gravar um evento dizendo quantas descartou**.
+   Se a conta não fechar, o kernel perdeu datagramas — UDP faz isso, e o
+   receptor não tem como saber; `netstat -su` no host mostra.
+6. **O relatório não esconde o que não sabe.** Abra Relatórios →
    Disponibilidade. A faixa âmbar embaixo tem de dizer quantos equipamentos
    ficaram fora da média por falta de observação. Se ela sumir, desconfie: ou
    todo o parque foi sondado, ou alguém tirou a ressalva.

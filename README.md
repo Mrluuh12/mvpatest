@@ -532,6 +532,49 @@ e a cor é reforço; num desenho ela seria o único sinal.
 Métrica que só tem a última leitura devolve a frase, não um desenho. Uma linha
 feita de um ponto só parece informação — e é pior que gráfico nenhum.
 
+## Eventos: o terceiro canal (syslog e traps)
+
+Métrica responde *quanto*; relação responde *quem com quem*; evento responde
+*o que aconteceu, segundo o próprio equipamento*. Os dois primeiros a
+plataforma vai buscar. Este chega sem ser chamado — e a inversão traz três
+problemas que os outros não têm.
+
+**A confiança é outra.** Syslog sobre UDP não autentica nada: qualquer um na
+rede pode mandar uma mensagem dizendo ser qualquer IP. A plataforma atribui
+pelo IP de origem porque não há alternativa, e **registra que foi assim**. Um
+evento não é prova; é o que alguém disse, e a tela diz isso.
+
+**O volume não é nosso.** Uma porta oscilando manda milhares de mensagens por
+minuto. Sem limite por origem, um equipamento defeituoso enche a tabela e leva
+junto o que importa. O receptor conta, descarta o excedente e **grava um evento
+dizendo quantos descartou** — silêncio aqui seria a plataforma escondendo que
+ficou cega justo quando havia mais o que ver.
+
+**A hora é do remetente.** O carimbo dentro da mensagem vem do relógio do
+equipamento, que pode estar errado em horas. Guardam-se os dois: o que ele
+disse e o que nós vimos. Divergência grande é achado — relógio errado estraga
+qualquer correlação depois.
+
+### UDP perde, e o receptor não tem como saber
+
+Medido aqui: 400 mensagens numa rajada, **294 chegaram**. O kernel descartou o
+resto antes de qualquer código nosso rodar. Subir o buffer de recepção para
+8 MB fechou a conta em 400/400 no mesmo teste — mas não elimina o problema, e
+fingir que sim seria a plataforma mentindo sobre a própria cobertura. Quem
+precisa da conta exata olha `netstat -su`, ou usa syslog sobre TCP.
+
+O que **pode** ser visto é contado: fila cheia vira evento de alerta próprio.
+
+### O parser aguenta o campo
+
+Três formatos, porque é o que chega: RFC 5424, RFC 3164, e RFC 3164 com o
+número de sequência que a Cisco enfia na frente e que quebra parser ingênuo.
+Um 5424 levemente fora do padrão ainda entrega hora e remetente — perder o
+carimbo por causa de um campo a menos é descartar o dado bom junto com a
+formatação ruim. E mensagem que não casa com formato nenhum vira evento mesmo
+assim: equipamento que fala errado ainda está falando, e o aviso que interessa
+costuma vir no dia em que tudo está estranho.
+
 ## Relatórios
 
 Um relatório aqui devolve **as ressalvas junto do número**, e elas não são

@@ -21,6 +21,7 @@ semear-inventario = "inventario.cli:main"
 semear-banco = "plataforma.cli:main"
 criar-admin = "plataforma.admin:main"
 criar-credencial = "plataforma.credencial_cli:main"
+receptor-syslog = "plataforma.receptor:main"
 
 [build-system]
 requires = ["setuptools>=68"]

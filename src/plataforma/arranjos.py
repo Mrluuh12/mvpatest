@@ -43,6 +43,7 @@ class TipoCartao(StrEnum):
     IDENTIDADE = "identidade"
     VIZINHOS = "vizinhos"
     GRAFICO = "grafico"
+    EVENTOS = "eventos"
     IMAGENS = "imagens"
     TEXTO = "texto"
     ACOES = "acoes"
@@ -104,6 +105,12 @@ CATALOGO: tuple[DefCartao, ...] = (
         descricao="Uma métrica ao longo do tempo. A série vem de quem a guarda "
                   "— o Prometheus, ou as transições de estado.",
         opcoes=("metrica", "janela"),
+    ),
+    DefCartao(
+        tipo=TipoCartao.EVENTOS, titulo_padrao="O que ele contou", contextos=(A, D),
+        descricao="Syslog e traps que o próprio equipamento enviou, com o grau "
+                  "de confiança na origem.",
+        opcoes=("limite", "severidade_minima"),
     ),
     DefCartao(
         tipo=TipoCartao.IMAGENS, titulo_padrao="Imagens", contextos=(A, D),
@@ -216,6 +223,7 @@ ARRANJO_DISPOSITIVO_PADRAO = Arranjo(
             opcoes={"metrica": "rf_snr_db", "janela": "6h"},
         ),
         Cartao(tipo=TipoCartao.VIZINHOS, largura=2),
+        Cartao(tipo=TipoCartao.EVENTOS, largura=4),
         Cartao(tipo=TipoCartao.TRANSICOES, largura=2),
         Cartao(tipo=TipoCartao.AUDITORIA, largura=4),
     ),

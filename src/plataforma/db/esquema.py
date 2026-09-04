@@ -223,6 +223,38 @@ credencial = Table(
 )
 
 
+#: O que o equipamento contou por conta própria. É o terceiro canal: métrica
+#: responde "quanto", relação responde "quem com quem", evento responde "o que
+#: aconteceu, segundo ele".
+#:
+#: `sujeito` é nulo quando o IP de origem não resolve para nada do cadastro —
+#: e isso é achado, não erro: alguma coisa na rede está falando e a planilha
+#: não a conhece.
+evento = Table(
+    "evento",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("sujeito", Text),
+    Column("origem_ip", Text, nullable=False),
+    Column("tipo", String(16), nullable=False),
+    Column("severidade", String(16), nullable=False),
+    Column("facilidade", String(16), nullable=False, server_default=text("''")),
+    Column("mensagem", Text, nullable=False),
+    Column("remetente", Text, nullable=False, server_default=text("''")),
+    #: Como a origem foi estabelecida. Syslog sobre UDP não autentica nada:
+    #: guardar isso ao lado do evento evita que ele seja lido como prova.
+    Column("confianca", String(24), nullable=False, server_default=text("'ip_de_origem'")),
+    Column("atributos", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    #: A hora que o remetente disse, e a que nós vimos. Divergência grande é
+    #: relógio errado, e relógio errado estraga qualquer correlação depois.
+    Column("em", DateTime(timezone=True)),
+    Column("recebido_em", DateTime(timezone=True), nullable=False),
+    Index("ix_evento_recebido", "recebido_em"),
+    Index("ix_evento_sujeito", "sujeito", "recebido_em"),
+    Index("ix_evento_severidade", "severidade", "recebido_em"),
+)
+
+
 #: Saúde de cada módulo — as cinco séries obrigatórias, no seu estado atual.
 saude_modulo = Table(
     "saude_modulo",

@@ -87,7 +87,7 @@
     ativos: [], sinais: [], achados: {}, resumo: {}, saude: {}, transicoes: [],
     sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
-    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {},
+    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {}, eventos: [],
     relSel: null, relJanela: "7d", relLista: null,
   };
 
@@ -756,6 +756,37 @@
       </div></section>`;
   }
 
+  //: Severidade do syslog vira selo. Emergência a erro são vermelhos porque
+  //: o equipamento está dizendo que algo quebrou; aviso e atenção, âmbar.
+  const SEV_SELO = {
+    emergencia: "vermelho", alerta: "vermelho", critico: "vermelho", erro: "vermelho",
+    aviso: "ambar", atencao: "ambar", informativo: "neutro", depuracao: "neutro",
+  };
+
+  function cxEventos(c) {
+    const evs = S.eventos || [];
+    const linhas = evs.map((e) => `<tr>
+      <td class="mono">${esc(hora(e.recebido_em))}</td>
+      <td><span class="selo liso ${SEV_SELO[e.severidade] || "neutro"}"
+        >${esc(e.severidade)}</span></td>
+      <td class="mono">${esc(e.origem_ip)}</td>
+      <td>${esc(e.mensagem)}${
+        e.confianca !== "ip_de_origem"
+          ? ` <i class="nota">${esc(e.confianca.replace(/_/g, " "))}</i>` : ""}</td>
+    </tr>`).join("");
+    return `<section class="cx"><header><h2>${tit(c, "O que ele contou")}</h2>
+      ${evs.length ? `<span class="dir">${evs.length}</span>` : ""}</header>
+      <div class="conteudo rente"><div class="rol"><table>
+        <thead><tr><th>Quando</th><th>Grau</th><th>Origem</th><th>Mensagem</th></tr></thead>
+        <tbody>${linhas || `<tr><td colspan="4" class="nulo">
+          nada recebido — o receptor de syslog precisa estar rodando e o
+          equipamento apontado para ele</td></tr>`}</tbody>
+      </table></div></div>
+      <div class="pe"><span class="obs-conf">A origem é o IP do remetente.
+        Syslog sobre UDP não autentica nada: isto é o que alguém disse, não
+        prova.</span></div></section>`;
+  }
+
   function cxVizinhos(c) {
     const tipos = c.opcoes?.tipos || ENLACES_DE_REDE;
     const vs = (S.vizinhos || []).filter((v) => tipos.includes(v.tipo));
@@ -803,6 +834,7 @@
     identidade: (c, x) => cxIdentidade(c, x.dispositivo),
     vizinhos: (c) => cxVizinhos(c),
     grafico: (c, x, i) => cxGrafico(c, x, i),
+    eventos: (c) => cxEventos(c),
     imagens: (c, x) => cxImagens(c, x),
     texto: (c, x, i) => cxTexto(c, i),
     auditoria: (c) => cxAuditoria(c),
@@ -1108,6 +1140,8 @@
         api(`/api/v1/leituras?sujeito=${encodeURIComponent(d.chave)}`).catch(() => []),
         api(`/api/v1/vizinhos?chave=${encodeURIComponent(d.chave)}`).catch(() => []),
       ]);
+      S.eventos = await api(
+        `/api/v1/eventos?sujeito=${encodeURIComponent(d.chave)}&limite=20`).catch(() => []);
       pintarDispositivo(f, d);
       return;
     }

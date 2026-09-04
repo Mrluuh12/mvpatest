@@ -474,3 +474,4 @@ td.num{text-align:right}
 @media(prefers-color-scheme:dark){
   .ressalva{color:#F0D08A;background:#2C2411;border-top-color:#5C4A16}
 }
+.obs-conf{font-size:11px;color:var(--apagado);line-height:1.5}

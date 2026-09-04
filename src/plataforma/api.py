@@ -380,6 +380,24 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         async with fonte._engine.connect() as conexao:
             return await leituras_de(conexao, sujeito)
 
+    @app.get("/api/v1/eventos", tags=["plataforma"])
+    async def ver_eventos(
+        sujeito: str | None = None,
+        severidade_minima: str | None = None,
+        limite: int = 50,
+    ) -> list[dict]:
+        """O que os equipamentos contaram por conta própria.
+
+        Cada linha carrega `confianca`: syslog sobre UDP não autentica nada, e
+        um evento não é prova — é o que alguém disse.
+        """
+        if fonte._engine is None:
+            return []
+        from .db.eventos import ultimos
+
+        async with fonte._engine.connect() as conexao:
+            return await ultimos(conexao, sujeito, severidade_minima, limite)
+
     @app.get("/api/v1/relatorios", tags=["relatorios"])
     async def listar_relatorios() -> list[dict]:
         from .db.relatorios import RELATORIOS
