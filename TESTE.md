@@ -49,6 +49,11 @@ criar-admin ana --nome "Ana Souza" --zona corporativa
 ## 4. Subir a interface
 
 ```bash
+# Onde vive o Prometheus que o seu exportador Rajant alimenta.
+# Sem isto a interface sobe igual, mas os gráficos dizem que não sabem
+# onde perguntar — em vez de desenharem uma linha vazia.
+export PLATAFORMA_PROMETHEUS="http://SEU-PROMETHEUS:9090"
+
 uvicorn plataforma.api:app --host 0.0.0.0 --port 8000
 ```
 
@@ -62,6 +67,9 @@ Abra `http://SEU-HOST:8000`. A tela pede login. A partir daí:
 - **Personalizar tela** (canto direito) → acrescentar, remover, renomear,
   reordenar e alargar cartões. Ao salvar, escolha o alcance: só esta máquina,
   toda a frota, ou o padrão.
+- **Gráfico** na ficha do aparelho, com janelas de 30m a 7d. Embaixo dele fica
+  a consulta que produziu o desenho — se o número parecer estranho, dá para
+  conferir na fonte.
 
 ## 5. Ligar a coleta
 
@@ -169,3 +177,6 @@ as pessoas param de rodar.
    isolado, não de mina parada.
 3. **A malha não se desfaz quando o Prometheus cai.** Derrube o Prometheus e
    rode o módulo Rajant. `arestas_fechadas` deve ser **0**.
+4. **O gráfico não inventa.** Ponha um cartão de gráfico numa métrica de SNMP
+   (`iface_bytes_rx`, por exemplo). Ele deve **dizer que não tem série**, não
+   desenhar uma linha reta a partir da última leitura.
