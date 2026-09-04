@@ -87,7 +87,7 @@
     ativos: [], sinais: [], achados: {}, resumo: {}, saude: {}, transicoes: [],
     sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
-    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [],
+    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [],
   };
 
   /* três situações distintas, nunca duas */
@@ -617,6 +617,31 @@
       </div></div></section>`;
   }
 
+  //: Relações de rede. `embarcado_em` e `alimentacao` também são arestas
+  //: deste equipamento, mas dizem onde ele mora e de onde vem a energia — não
+  //: com quem ele fala. Repetir o ativo aqui, que já está no resumo, só
+  //: dilui o cartão. Quem quiser vê-las põe `tipos` nas opções.
+  const ENLACES_DE_REDE = ["peer_mesh", "peer_ptp", "associacao_ptmp",
+                           "enlace_fisico", "dependencia_l3"];
+
+  function cxVizinhos(c) {
+    const tipos = c.opcoes?.tipos || ENLACES_DE_REDE;
+    const vs = (S.vizinhos || []).filter((v) => tipos.includes(v.tipo));
+    const linhas = vs.map((v) => `<tr class="clicavel" data-disp="${esc(v.destino)}">
+      <td class="nome">${esc(v.nome)}</td>
+      <td><span class="selo liso neutro">${esc(v.tipo)}</span></td>
+      <td class="mono">${esc(hora(v.desde))}</td>
+      <td class="mono">${esc(v.atributos?.radio || "—")}</td></tr>`).join("");
+    return `<section class="cx"><header><h2>${tit(c, "Vizinhança")}</h2>
+      ${vs.length ? `<span class="dir">${vs.length}</span>` : ""}</header>
+      <div class="conteudo rente"><div class="rol"><table>
+        <thead><tr><th>Vizinho</th><th>Enlace</th><th>Desde</th><th>Rádio</th></tr></thead>
+        <tbody>${linhas || `<tr><td colspan="4" class="nulo">
+          nenhuma vizinhança observada — o módulo que a publica é o Rajant
+        </td></tr>`}</tbody>
+      </table></div></div></section>`;
+  }
+
   function cxAuditoria(c) {
     const linhas = (S.auditoria || []).slice(0, 8).map((a) => `<tr>
       <td class="mono">${esc(hora(a.em))}</td>
@@ -644,6 +669,7 @@
     transicoes: (c) => cxTransicoes(c),
     dispositivos: (c, x) => tabelaDispositivos(c, x.dispositivos),
     identidade: (c, x) => cxIdentidade(c, x.dispositivo),
+    vizinhos: (c) => cxVizinhos(c),
     imagens: (c, x) => cxImagens(c, x),
     texto: (c, x, i) => cxTexto(c, i),
     auditoria: (c) => cxAuditoria(c),
@@ -880,8 +906,10 @@
     if (d) {
       await carregarArranjo("dispositivo", d.chave, d.papel);
       await carregarAuditoria(`disp:${d.chave}`);
-      S.leituras = await api(
-        `/api/v1/leituras?sujeito=${encodeURIComponent(d.chave)}`).catch(() => []);
+      [S.leituras, S.vizinhos] = await Promise.all([
+        api(`/api/v1/leituras?sujeito=${encodeURIComponent(d.chave)}`).catch(() => []),
+        api(`/api/v1/vizinhos?chave=${encodeURIComponent(d.chave)}`).catch(() => []),
+      ]);
       pintarDispositivo(f, d);
       return;
     }

@@ -48,13 +48,14 @@ from typing import Any
 
 import httpx
 
-from inventario.modelo import Zona
+from inventario.modelo import TipoAresta, Zona
 from plataforma.modulos.contrato import (
     Alvo,
     Descoberta,
     Manifesto,
     Observacao,
     Qualidade,
+    Relacao,
     ResultadoColeta,
     filtrar_observacoes,
 )
@@ -138,6 +139,12 @@ CONSULTAS: tuple[Consulta, ...] = (
     ),
 )
 
+#: A vizinhança da malha, série a série — esta **não** agrega, porque o que
+#: interessa aqui é justamente quem é o outro lado. É a única consulta cara do
+#: módulo (~2.700 séries), e é a que preenche o grafo temporal.
+CONSULTA_VIZINHOS = "rajant_peer_ativo == 1"
+
+
 MANIFESTO = Manifesto(
     nome="rajant",
     versao="1.0.0",
@@ -149,6 +156,7 @@ MANIFESTO = Manifesto(
     somente_leitura=True,
     zona_permitida=(Zona.CORPORATIVA,),
     papeis_alvo=("radio_mesh",),
+    produz_relacoes=(TipoAresta.PEER_MESH.value,),
 )
 
 
@@ -304,12 +312,56 @@ class ModuloRajant:
         #: Última junção, para a aba de coleta poder mostrar o que não casou.
         self.ultima_juncao: Juncao | None = None
 
+    async def _vizinhanca(
+        self, cliente: httpx.AsyncClient, juncao: Juncao, alvos: list[dict[str, Any]]
+    ) -> tuple[tuple[Relacao, ...], bool]:
+        """Quem está falando com quem, agora.
+
+        O rótulo ``peer`` traz o IPv4 do vizinho — ou ``mac:...`` quando o
+        State.Peer não publica endereço. Os dois servem: a plataforma resolve
+        identidade, e o MAC é justamente o identificador mais forte que ela
+        tem. O módulo não tenta resolver nada; relata o que viu.
+        """
+        try:
+            series = await self.prometheus.instantanea(CONSULTA_VIZINHOS, cliente)
+        except Exception:  # noqa: BLE001
+            return (), False
+
+        parcial = casar(series, alvos)
+        juncao.absorver(parcial)
+
+        vistas: set[tuple[str, str]] = set()
+        relacoes: list[Relacao] = []
+        for serie in series:
+            rotulos = serie.get("metric", {})
+            identidade = f"{rotulos.get('bc', '')}@{rotulos.get('ip', '')}"
+            origem = juncao.por_chave.get(identidade)
+            destino = (rotulos.get("peer") or "").strip()
+            if not origem or not destino:
+                continue
+            # Um BC com três rádios vê o mesmo vizinho por mais de uma
+            # interface: é um enlace só entre os dois equipamentos.
+            if (origem, destino) in vistas:
+                continue
+            vistas.add((origem, destino))
+            relacoes.append(
+                Relacao(
+                    origem=origem,
+                    destino=destino,
+                    tipo=TipoAresta.PEER_MESH,
+                    atributos={"radio": rotulos.get("radio", "")},
+                )
+            )
+        return tuple(relacoes), True
+
     async def coletar(self, alvos: list[dict[str, Any]]) -> ResultadoColeta:
         inicio = time.perf_counter()
         brutas: list[Observacao] = []
         recusas: list[str] = []
         juncao = Juncao(por_chave={}, sem_inventario=set(), ambiguos=set())
         consultas_falhas = 0
+        relacoes: tuple[Relacao, ...] = ()
+        vizinhanca_lida = False
 
         async with httpx.AsyncClient(transport=self.transporte) as cliente:
             for consulta in CONSULTAS:
@@ -365,6 +417,8 @@ class ModuloRajant:
                         )
                     )
 
+            relacoes, vizinhanca_lida = await self._vizinhanca(cliente, juncao, alvos)
+
         self.ultima_juncao = juncao
         observacoes, rejeitadas = filtrar_observacoes(brutas)
         avisos = tuple(
@@ -383,6 +437,11 @@ class ModuloRajant:
             falhas = len(alvos)
         return ResultadoColeta(
             observacoes=observacoes,
+            relacoes=relacoes,
+            # Só uma leitura inteira autoriza a plataforma a fechar aresta. Com
+            # a consulta falhando, a ausência de um vizinho significa "não
+            # perguntei" — e fechar tudo gravaria que a malha se desfez.
+            relacoes_completas=vizinhanca_lida,
             alvos_total=len(alvos),
             alvos_falha=falhas,
             duracao_s=time.perf_counter() - inicio,

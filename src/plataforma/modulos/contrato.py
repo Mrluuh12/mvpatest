@@ -24,7 +24,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from inventario.modelo import ZONAS_PROIBIDAS, Zona
+from inventario.modelo import ZONAS_PROIBIDAS, TipoAresta, Zona
 from plataforma.dicionario import DERIVADAS, MetricaDesconhecida, validar
 
 
@@ -62,6 +62,25 @@ class Observacao(BaseModel):
     def _no_dicionario(cls, v: str) -> str:
         validar(v)  # levanta MetricaDesconhecida com sugestão
         return v
+
+
+class Relacao(BaseModel):
+    """A unidade de dado do **canal de fatos**.
+
+    Métrica responde "quanto"; relação responde "quem estava ligado a quem".
+    São canais separados porque mudam em ritmos diferentes: a métrica muda a
+    cada ciclo e é substituída, a relação dura horas e o que interessa nela é
+    justamente **quando começou e quando deixou de valer**.
+
+    ``destino`` é uma identidade observada, não uma chave do inventário: o
+    vizinho pode ser um rádio que a planilha não tem. Quem resolve é a
+    plataforma, que conhece os identificadores; o módulo relata o que viu.
+    """
+
+    origem: str
+    destino: str
+    tipo: TipoAresta
+    atributos: dict[str, Any] = Field(default_factory=dict)
 
 
 class Manifesto(BaseModel):
@@ -139,10 +158,24 @@ class ResultadoColeta(BaseModel):
     """
 
     observacoes: tuple[Observacao, ...] = ()
+    relacoes: tuple[Relacao, ...] = ()
     alvos_total: int = 0
     alvos_falha: int = 0
     duracao_s: float = 0.0
     rejeitadas: tuple[str, ...] = ()
+
+    #: ``relacoes`` é a vizinhança **inteira** que este módulo observa?
+    #:
+    #: Só com ``True`` a plataforma pode fechar uma aresta que sumiu da lista,
+    #: porque só aí a ausência significa "deixou de existir". Numa leitura
+    #: parcial — o Prometheus fora do ar, metade das consultas falhando — a
+    #: ausência significa "não perguntei", e fechar tudo escreveria que a
+    #: malha inteira se desfez.
+    #:
+    #: O padrão é ``False`` de propósito: um módulo que esqueça de declarar
+    #: nunca provoca fechamento em massa. É a mesma regra da autorização —
+    #: nega por omissão.
+    relacoes_completas: bool = False
 
     @property
     def completa(self) -> bool:

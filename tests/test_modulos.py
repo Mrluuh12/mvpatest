@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from inventario.modelo import Zona
+from inventario.modelo import ZONAS_PROIBIDAS, Zona
 from plataforma.dicionario import MetricaDesconhecida, sugerir, validar  # noqa: F401
 from plataforma.modulos.contrato import (
     Alvo,
@@ -308,7 +308,17 @@ class TestModuloIcmp:
         assert resultado.alvos_total == 0
         assert resultado.observacoes == ()
 
-    async def test_manifesto_do_icmp_e_somente_leitura_e_corporativo(self) -> None:
-        manifesto = ModuloIcmp().manifesto
-        assert manifesto.somente_leitura
-        assert manifesto.zona_permitida == (Zona.CORPORATIVA,)
+    async def test_manifesto_do_icmp_e_somente_leitura(self) -> None:
+        assert ModuloIcmp().manifesto.somente_leitura
+
+    async def test_icmp_alcanca_ot_nivel3_mas_nunca_o_chao_de_fabrica(self) -> None:
+        """Um eco ICMP não lê nem escreve nada no equipamento: pergunta se o
+        endereço responde. Declarar ot_nivel3 não afrouxa nada — o coletor
+        continua preso à sua zona, então sondar a OT exige um processo rodando
+        dentro dela. Foram 294 equipamentos que saíram de zero.
+
+        Os níveis 0 a 2 continuam fora, e nenhuma declaração os alcança: o
+        validador do manifesto recusa antes do carregamento."""
+        zonas = set(ModuloIcmp().manifesto.zona_permitida)
+        assert zonas == {Zona.CORPORATIVA, Zona.OT_NIVEL3}
+        assert not (zonas & ZONAS_PROIBIDAS)

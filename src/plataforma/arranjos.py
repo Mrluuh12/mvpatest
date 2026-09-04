@@ -41,6 +41,7 @@ class TipoCartao(StrEnum):
     TRANSICOES = "transicoes"
     DISPOSITIVOS = "dispositivos"
     IDENTIDADE = "identidade"
+    VIZINHOS = "vizinhos"
     IMAGENS = "imagens"
     TEXTO = "texto"
     ACOES = "acoes"
@@ -91,6 +92,11 @@ CATALOGO: tuple[DefCartao, ...] = (
     DefCartao(
         tipo=TipoCartao.IDENTIDADE, titulo_padrao="Identidade", contextos=(D,),
         descricao="Identificadores conhecidos e qual deles resolve a identidade.",
+    ),
+    DefCartao(
+        tipo=TipoCartao.VIZINHOS, titulo_padrao="Vizinhança", contextos=(D,),
+        descricao="Com quem este equipamento está falando agora, e desde quando.",
+        opcoes=("limite",),
     ),
     DefCartao(
         tipo=TipoCartao.IMAGENS, titulo_padrao="Imagens", contextos=(A, D),
@@ -198,8 +204,9 @@ ARRANJO_DISPOSITIVO_PADRAO = Arranjo(
         Cartao(tipo=TipoCartao.IDENTIDADE, largura=1),
         Cartao(tipo=TipoCartao.TELEMETRIA, largura=1),
         Cartao(tipo=TipoCartao.IMAGENS, largura=1),
+        Cartao(tipo=TipoCartao.VIZINHOS, largura=2),
         Cartao(tipo=TipoCartao.TRANSICOES, largura=2),
-        Cartao(tipo=TipoCartao.AUDITORIA, largura=2),
+        Cartao(tipo=TipoCartao.AUDITORIA, largura=4),
     ),
 )
 

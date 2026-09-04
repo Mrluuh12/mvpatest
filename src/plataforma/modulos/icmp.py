@@ -25,6 +25,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from inventario.modelo import Zona
+
 from .contrato import (
     Alvo,
     Descoberta,
@@ -207,6 +209,12 @@ MANIFESTO = Manifesto(
         "ativo_jitter_ms",
     ),
     somente_leitura=True,
+    # Um eco ICMP não lê nem escreve nada no equipamento: pergunta se o
+    # endereço responde. É o que permite declarar ot_nivel3 sem afrouxar
+    # nada — o coletor continua preso à sua zona, e sondar a OT exige um
+    # processo rodando **dentro** dela. Os níveis 0 a 2 continuam recusados
+    # pelo próprio manifesto, e nenhuma declaração os alcança.
+    zona_permitida=(Zona.CORPORATIVA, Zona.OT_NIVEL3),
 )
 
 

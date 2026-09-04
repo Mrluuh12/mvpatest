@@ -377,6 +377,22 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         async with fonte._engine.connect() as conexao:
             return await leituras_de(conexao, sujeito)
 
+    @app.get("/api/v1/vizinhos", tags=["inventario"])
+    async def ver_vizinhos(chave: str, quando: datetime | None = None) -> list[dict]:
+        """Com quem este equipamento estava ligado — agora, ou no instante dado.
+
+        É a pergunta que justifica guardar validade em vez de sobrescrever: o
+        grafo de ontem às 14h37 continua lá.
+        """
+        if fonte._engine is None:
+            return []
+        from .db.grafo import vizinhos
+
+        nomes = {d.chave: d.nome for d in fonte.repo.dispositivos()}
+        async with fonte._engine.connect() as conexao:
+            achados = await vizinhos(conexao, chave, quando)
+        return [{**v, "nome": nomes.get(v["destino"], v["destino"])} for v in achados]
+
     @app.get("/api/v1/resumo", tags=["inventario"])
     def resumo() -> dict:
         return fonte.repo.resumo()

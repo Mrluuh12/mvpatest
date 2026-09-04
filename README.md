@@ -1,4 +1,4 @@
-# Plataforma TI + OT — marcos M0, M1 e área ADM
+# Plataforma TI + OT — marcos M0, M1, M2 e área ADM
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -435,6 +435,67 @@ a não confiar na tela. Agora a família é apurada do banco — disponível qua
 existe leitura dela —, e só as que a linha de base dá como ausentes são
 promovidas, para que o ICMP não perca o crédito da disponibilidade.
 
+## Canal de fatos e grafo temporal (marco M2)
+
+A tabela `aresta` sempre teve `TSTZRANGE` e restrição de exclusão, mas até
+aqui só recebia o que veio da planilha — 672 arestas `embarcado_em`, nenhuma
+observada. É o canal de fatos que a preenche com o que a rede está fazendo, e
+é o que separa a plataforma de um painel: uma lista de equipamentos com
+números ao lado vira uma **rede que muda no tempo**.
+
+Métrica responde *quanto*; relação responde *quem estava ligado a quem*. São
+canais separados porque mudam em ritmos diferentes: a métrica é substituída a
+cada ciclo, a relação dura horas e o que interessa nela é justamente quando
+começou e quando deixou de valer.
+
+```
+rádio: CA-1001-RADIO RJT
+
+  em 23:44:07   CA-1015, 02:D0:12:DB:F6:5C, CA-1044-RADIO RJT
+  agora         CA-1015, 02:D0:12:0E:F8:85, 02:D0:12:E8:F4:52
+
+  perdeu 2, ganhou 2, manteve 1
+```
+
+### Três propriedades, e a segunda evita gravar uma mentira
+
+**Conciliar é idempotente.** Rodar de novo com a mesma vizinhança não cria
+linha nem fecha nada. Sem isso, 149 rádios a cada minuto seriam 200 mil linhas
+por dia dizendo a mesma coisa; com isso, a tabela cresce com as **mudanças**.
+
+**Só fecha aresta quando a leitura foi completa.** Se o Prometheus caiu ou
+metade das consultas falhou, a ausência de um vizinho significa "não
+perguntei", não "o enlace caiu". Fechar tudo escreveria na história que a
+malha inteira se desfez num instante — e **aresta fechada é fato datado**, que
+fica. É o mesmo raciocínio da suspeita de isolamento, aplicado ao grafo.
+Verificado: com o Prometheus derrubado no meio, as 554 arestas continuaram
+abertas e nenhuma foi fechada.
+
+Pela mesma razão, o fechamento se limita a quem foi lido no ciclo: uma coleta
+completa de 22 rádios não pode fechar as arestas dos outros 127 só por não os
+ter mencionado.
+
+**Identidade ambígua não vira aresta.** O módulo relata o que viu — um IP, um
+`mac:...` —, e quem resolve é a plataforma, que conhece os identificadores. Um
+MAC ou IP disputado por dois equipamentos não resolve para nenhum: pendurar o
+enlace no equipamento errado é pior do que não ter o enlace. MAC é comparado
+sem separador e em maiúsculas, porque o cadastro guarda `00:01:B9:66:A1:AE` e
+o equipamento pode publicar `00-01-b9-66-a1-ae` — perder um enlace por causa
+de um hífen seria um defeito difícil de enxergar.
+
+### Cobertura depois deste bloco
+
+O ICMP passa a declarar `ot_nivel3`. Um eco não lê nem escreve nada no
+equipamento — pergunta se o endereço responde —, e o coletor continua preso à
+sua zona, então sondar a OT exige um processo rodando **dentro** dela. Os
+níveis 0 a 2 seguem recusados pelo próprio manifesto.
+
+| Zona | Equipamentos | Com estado |
+|---|---|---|
+| corporativa | 388 | 368 |
+| ot_nivel3 | 294 | **286** (era 0) |
+| ot_nivel2 | 26 | 0, e para sempre |
+
 ## Contas, autorização e auditoria
 
 A primeira conta é criada por quem instala. **Não há senha padrão embutida** —
@@ -486,9 +547,16 @@ inúteis, não sessões válidas.
 
 ## O que ainda não está aqui
 
-- Canal B — ingestão de fatos estruturais e o grafo temporal (marco M2)
-- Módulo SNMP declarativo e séries históricas (marco M3)
+- Módulos de outros fabricantes: Astra/InfiNet (18 rádios PtP/PtMP), MEMS
+  Michelin (46 gateways de pneu), PTX (97 IHM de bordo)
+- Módulo SNMP declarativo — a família `interface`, 12 métricas de porta, está
+  inteiramente vazia (marco M3)
+- Gráficos e relatórios. A série histórica **não** será reimplementada aqui: o
+  Prometheus do exportador já a guarda, e duplicá-la criaria duas verdades
+  sobre o mesmo número. Falta o cartão de gráfico e o endpoint de consulta.
 - Subsistema de ação (marco M4)
+- Motor de alarmes — adiado a pedido, e ainda é a decisão certa: sem série e
+  sem grafo, um alarme só saberia dizer "não responde"
 
 Os testes usam um banco separado (`plataforma_teste`) de propósito: as
 fixtures apagam o esquema entre casos, e uma suíte que destrói o banco de

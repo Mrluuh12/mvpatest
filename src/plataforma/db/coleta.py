@@ -133,6 +133,44 @@ async def leituras_de(conexao: AsyncConnection, sujeito: str) -> list[dict]:
     ]
 
 
+async def _conciliar_grafo(
+    conexao: AsyncConnection, resultado: ResultadoColeta, momento: datetime
+) -> dict[str, int]:
+    """Traduz as relações observadas e reconcilia o grafo temporal.
+
+    O módulo relata identidades (``mac:...``, um IP); traduzir para chave do
+    inventário é trabalho da plataforma, que é quem conhece os
+    identificadores. Vizinho que não resolve não vira aresta — mas é contado,
+    porque rádio que a malha vê e a planilha não tem é achado de inventário.
+    """
+    from .grafo import conciliar, resolver_identidades
+
+    if not resultado.relacoes and not resultado.relacoes_completas:
+        return {}
+
+    resolucao = await resolver_identidades(
+        conexao, {r.destino for r in resultado.relacoes}
+    )
+    traduzidas = tuple(
+        r.model_copy(update={"destino": resolucao.por_identidade[r.destino]})
+        for r in resultado.relacoes
+        if r.destino in resolucao.por_identidade
+    )
+    # Quem foi lido de fato neste ciclo. Fechar aresta de quem não foi lido
+    # seria afirmar queda sem ter perguntado.
+    lidos = {o.sujeito for o in resultado.observacoes}
+
+    total = {"nao_resolvidos": len(resolucao.desconhecidas) + len(resolucao.ambiguas)}
+    for tipo in {r.tipo for r in resultado.relacoes}:
+        c = await conciliar(
+            conexao, tipo, traduzidas, momento,
+            completo=resultado.relacoes_completas, observadores=lidos,
+        )
+        total["arestas_abertas"] = total.get("arestas_abertas", 0) + c.abertas
+        total["arestas_fechadas"] = total.get("arestas_fechadas", 0) + c.fechadas
+    return total
+
+
 async def gravar_coleta(
     conexao: AsyncConnection,
     nome_modulo: str,
@@ -150,6 +188,7 @@ async def gravar_coleta(
     }
 
     await _gravar_leituras(conexao, nome_modulo, resultado, momento)
+    grafo = await _conciliar_grafo(conexao, resultado, momento)
 
     linhas_estado = []
     mudancas = []
@@ -204,6 +243,7 @@ async def gravar_coleta(
     await _gravar_saude(conexao, nome_modulo, resultado, momento)
 
     return {
+        **grafo,
         "estados": len(linhas_estado),
         "transicoes": len(mudancas),
         "alcancaveis": sum(1 for ln in linhas_estado if ln["alcancavel"]),
