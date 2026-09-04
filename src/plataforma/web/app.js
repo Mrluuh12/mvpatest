@@ -87,7 +87,7 @@
     ativos: [], sinais: [], achados: {}, resumo: {}, saude: {}, transicoes: [],
     sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
-    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [],
+    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {},
   };
 
   /* três situações distintas, nunca duas */
@@ -624,6 +624,137 @@
   const ENLACES_DE_REDE = ["peer_mesh", "peer_ptp", "associacao_ptmp",
                            "enlace_fisico", "dependencia_l3"];
 
+  /* ============================== gráfico =============================== */
+
+  /** Desenho: 720x220 no viewBox, escalado pela largura do cartão. Uma série
+   *  só, então sem legenda — o título já a nomeia; e cor única, porque a
+   *  identidade não está em disputa com ninguém. */
+  const G = { L: 52, R: 14, T: 14, B: 26, W: 720, H: 220 };
+  const areaX = G.W - G.L - G.R;
+  const areaY = G.H - G.T - G.B;
+
+  const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString("pt-BR",
+    { hour: "2-digit", minute: "2-digit" });
+  const diaHora = (ts) => new Date(ts * 1000).toLocaleString("pt-BR",
+    { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+  /** Números redondos para a escala. Um eixo que vai de 13,47 a 25,31 é um
+   *  eixo que ninguém lê de relance. */
+  function escala(min, max) {
+    if (min === max) { min -= 1; max += 1; }
+    const bruto = (max - min) / 4;
+    const grandeza = Math.pow(10, Math.floor(Math.log10(bruto)));
+    const passo = [1, 2, 2.5, 5, 10].find((m) => m * grandeza >= bruto) * grandeza;
+    return { lo: Math.floor(min / passo) * passo, hi: Math.ceil(max / passo) * passo, passo };
+  }
+
+  const fmt = (v, casas = 1) =>
+    (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString("pt-BR") : v.toFixed(casas));
+
+  function desenhoNumerico(s) {
+    const pts = s.pontos;
+    if (!pts.length) return `<p class="nada">janela sem nenhum ponto</p>`;
+    const t0 = pts[0][0], t1 = pts[pts.length - 1][0] || t0 + 1;
+    const e = escala(Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[1])));
+    const px = (ts) => G.L + ((ts - t0) / (t1 - t0 || 1)) * areaX;
+    const py = (v) => G.T + areaY - ((v - e.lo) / (e.hi - e.lo || 1)) * areaY;
+
+    const grade = [];
+    for (let v = e.lo; v <= e.hi + 1e-9; v += e.passo) {
+      grade.push(`<line class="gg" x1="${G.L}" x2="${G.W - G.R}" y1="${py(v).toFixed(1)}"
+        y2="${py(v).toFixed(1)}"/>
+        <text class="ge" x="${G.L - 8}" y="${(py(v) + 4).toFixed(1)}">${esc(fmt(v))}</text>`);
+    }
+    const caminho = pts.map((p, i) =>
+      `${i ? "L" : "M"}${px(p[0]).toFixed(1)} ${py(p[1]).toFixed(1)}`).join(" ");
+
+    return `<svg class="graf" viewBox="0 0 ${G.W} ${G.H}" preserveAspectRatio="none"
+        role="img" aria-label="${esc(s.metrica)} ao longo do tempo">
+      ${grade.join("")}
+      <text class="ge x" x="${G.L}" y="${G.H - 8}">${esc(hhmm(t0))}</text>
+      <text class="ge x fim" x="${G.W - G.R}" y="${G.H - 8}">${esc(hhmm(t1))}</text>
+      <path class="linha" d="${caminho}"/>
+      <g class="mira" hidden><line y1="${G.T}" y2="${G.T + areaY}"/><circle r="4"/></g>
+      <rect class="captura" x="${G.L}" y="${G.T}" width="${areaX}" height="${areaY}"/>
+    </svg>
+    <div class="dica" hidden></div>`;
+  }
+
+  /** Estado ao longo do tempo é faixa, não linha: os dados são intervalos com
+   *  início e fim exatos, e interpolar entre eles inventaria transições.
+   *
+   *  O incerto é **hachurado**, não âmbar: vermelho e âmbar têm ΔE 4,6 em
+   *  deuteranopia — indistinguíveis. Nas pastilhas há texto junto e a cor é
+   *  reforço; num desenho ela seria o único sinal. */
+  function desenhoEstados(s) {
+    const fs = s.faixas;
+    if (!fs.length) return `<p class="nada">janela sem observação</p>`;
+    const t0 = fs[0].inicio, t1 = fs[fs.length - 1].fim || t0 + 1;
+    const px = (ts) => G.L + ((ts - t0) / (t1 - t0 || 1)) * areaX;
+    const alt = 46, topo = G.T + 30;
+
+    const barras = fs.map((f) => {
+      const x = px(f.inicio), l = Math.max(1, px(f.fim) - x);
+      const cls = f.alcancavel ? "ok" : (f.incerta ? "incerto" : "mau");
+      const rot = f.alcancavel ? "responde" : (f.incerta ? "sem resposta · incerto" : "sem resposta");
+      return `<rect class="faixa f-${cls}" x="${x.toFixed(1)}" y="${topo}"
+        width="${l.toFixed(1)}" height="${alt}"
+        data-de="${diaHora(f.inicio)}" data-ate="${diaHora(f.fim)}" data-rot="${esc(rot)}">
+        <title>${esc(rot)} — ${esc(diaHora(f.inicio))} até ${esc(diaHora(f.fim))}</title>
+      </rect>`;
+    }).join("");
+
+    const total = t1 - t0;
+    const vivo = fs.filter((f) => f.alcancavel).reduce((a, f) => a + (f.fim - f.inicio), 0);
+    const incerto = fs.filter((f) => !f.alcancavel && f.incerta)
+      .reduce((a, f) => a + (f.fim - f.inicio), 0);
+
+    return `<svg class="graf estados" viewBox="0 0 ${G.W} ${topo + alt + 30}"
+        preserveAspectRatio="none"
+        role="img" aria-label="estado ao longo do tempo">
+      <defs><pattern id="hachura" width="7" height="7" patternUnits="userSpaceOnUse"
+        patternTransform="rotate(45)">
+        <rect width="7" height="7" class="hf"/><line x1="0" y1="0" x2="0" y2="7" class="hl"/>
+      </pattern></defs>
+      ${barras}
+      <text class="ge x" x="${G.L}" y="${topo + alt + 20}">${esc(diaHora(t0))}</text>
+      <text class="ge x fim" x="${G.W - G.R}" y="${topo + alt + 20}">${esc(diaHora(t1))}</text>
+    </svg>
+    <div class="leg-estado">
+      <span><i class="q ok"></i>respondendo ${((vivo / total) * 100).toFixed(1)}%</span>
+      <span><i class="q incerto"></i>incerto ${((incerto / total) * 100).toFixed(1)}%</span>
+      <span><i class="q mau"></i>sem resposta</span>
+    </div>`;
+  }
+
+  function cxGrafico(c, x, i) {
+    const metrica = c.opcoes?.metrica || "rf_snr_db";
+    const janela = c.opcoes?.janela || "6h";
+    const nome = (METRICA[metrica] || [metrica, "", 1])[0];
+    const s = (S.series || {})[`${metrica}|${janela}`];
+
+    let corpo;
+    if (!s) corpo = `<p class="nada">carregando…</p>`;
+    else if (s.tipo === "ausente")
+      corpo = `<p class="sem-serie">${esc(s.motivo)}</p>`;
+    else corpo = s.tipo === "estados" ? desenhoEstados(s) : desenhoNumerico(s);
+
+    const nota = s && s.agregacao ? AGREGACAO[s.agregacao] : "";
+    return `<section class="cx grafico" data-metrica="${esc(metrica)}"
+        data-janela="${esc(janela)}" data-cartao="${i}">
+      <header><h2>${tit(c, nome)}</h2>
+        <span class="dir">
+          ${nota ? `<i class="nota">${esc(nota)}</i>` : ""}
+          ${["30m", "6h", "24h", "7d"].map((j) => `<button class="janela"
+            data-janela-ir="${j}" aria-current="${j === janela}">${j}</button>`).join("")}
+        </span></header>
+      <div class="conteudo">${corpo}
+        ${s && s.consulta ? `<p class="proveniencia" title="${esc(s.consulta)}">${
+          esc(s.origem === "transicoes" ? "das transições registradas" : s.consulta)
+        }</p>` : ""}
+      </div></section>`;
+  }
+
   function cxVizinhos(c) {
     const tipos = c.opcoes?.tipos || ENLACES_DE_REDE;
     const vs = (S.vizinhos || []).filter((v) => tipos.includes(v.tipo));
@@ -670,6 +801,7 @@
     dispositivos: (c, x) => tabelaDispositivos(c, x.dispositivos),
     identidade: (c, x) => cxIdentidade(c, x.dispositivo),
     vizinhos: (c) => cxVizinhos(c),
+    grafico: (c, x, i) => cxGrafico(c, x, i),
     imagens: (c, x) => cxImagens(c, x),
     texto: (c, x, i) => cxTexto(c, i),
     auditoria: (c) => cxAuditoria(c),
@@ -842,6 +974,20 @@
       `/api/v1/auditoria?sujeito=${encodeURIComponent(sujeito)}&limite=8`).catch(() => []);
   }
 
+  /** Busca só as séries que a tela vai desenhar. Um cartão que ninguém pôs
+   *  no arranjo não custa consulta. */
+  async function carregarSeries(chave) {
+    const pedidos = (S.arranjo?.cartoes || [])
+      .filter((c) => c.tipo === "grafico" && c.visivel !== false)
+      .map((c) => [c.opcoes?.metrica || "rf_snr_db", c.opcoes?.janela || "6h"]);
+    S.series = {};
+    await Promise.all(pedidos.map(async ([m, j]) => {
+      const q = new URLSearchParams({ chave, metrica: m, janela: j });
+      S.series[`${m}|${j}`] = await api(`/api/v1/serie?${q}`)
+        .catch((e) => ({ tipo: "ausente", motivo: e.message }));
+    }));
+  }
+
   function contextoAtual(f) {
     const d = S.dispSel ? f.dispositivos.find((x) => x.chave === S.dispSel) : null;
     return { ativo: f.ativo, dispositivos: f.dispositivos, dispositivo: d };
@@ -906,6 +1052,7 @@
     if (d) {
       await carregarArranjo("dispositivo", d.chave, d.papel);
       await carregarAuditoria(`disp:${d.chave}`);
+      await carregarSeries(d.chave);
       [S.leituras, S.vizinhos] = await Promise.all([
         api(`/api/v1/leituras?sujeito=${encodeURIComponent(d.chave)}`).catch(() => []),
         api(`/api/v1/vizinhos?chave=${encodeURIComponent(d.chave)}`).catch(() => []),
@@ -1016,6 +1163,19 @@
     if (S.editandoTela && S.arranjo && S.sel) {
       if (await editarTela(e, contextoAtual(await ficha(S.sel)))) return;
     }
+    const bj = e.target.closest("[data-janela-ir]");
+    if (bj && S.dispSel) {
+      const cartao = bj.closest("[data-cartao]");
+      const c = S.arranjo?.cartoes?.[Number(cartao.dataset.cartao)];
+      if (c) {
+        // Muda só em memória: a janela é escolha de quem está olhando agora,
+        // não configuração da tela. Salvar exigiria "Personalizar tela".
+        c.opcoes = { ...(c.opcoes || {}), janela: bj.dataset.janelaIr };
+        await carregarSeries(S.dispSel);
+        await pintarAba();
+      }
+      return;
+    }
     const dp = e.target.closest("[data-disp]");
     if (dp) { S.dispSel = dp.dataset.disp; S.editandoTela = false;
               S.aba = "ativo"; marcarAba(); await pintarAba(); return; }
@@ -1071,6 +1231,49 @@
     if (!ta || !S.arranjo) return;
     const c = S.arranjo.cartoes[Number(ta.dataset.texto)];
     if (c) c.opcoes = { ...(c.opcoes || {}), conteudo: ta.value };
+  });
+
+  /* A camada de leitura: um gráfico HTML é interativo por natureza, e sem
+   * mira o usuário fica adivinhando o valor de um pixel. */
+  document.body.addEventListener("mousemove", (e) => {
+    const svg = e.target.closest("svg.graf:not(.estados)");
+    const cx = e.target.closest(".cx.grafico");
+    if (!svg || !cx) return;
+    const chave = `${cx.dataset.metrica}|${cx.dataset.janela}`;
+    const s = (S.series || {})[chave];
+    if (!s || s.tipo !== "numerica" || !s.pontos.length) return;
+
+    const cxr = svg.getBoundingClientRect();
+    const uX = (e.clientX - cxr.left) / cxr.width * G.W;
+    const pts = s.pontos;
+    const t0 = pts[0][0], t1 = pts[pts.length - 1][0] || t0 + 1;
+    const alvoTs = t0 + ((uX - G.L) / areaX) * (t1 - t0);
+    let melhor = pts[0];
+    for (const p of pts) if (Math.abs(p[0] - alvoTs) < Math.abs(melhor[0] - alvoTs)) melhor = p;
+
+    const e2 = escala(Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[1])));
+    const px = G.L + ((melhor[0] - t0) / (t1 - t0 || 1)) * areaX;
+    const py = G.T + areaY - ((melhor[1] - e2.lo) / (e2.hi - e2.lo || 1)) * areaY;
+
+    const mira = svg.querySelector(".mira");
+    mira.hidden = false;
+    mira.querySelector("line").setAttribute("x1", px);
+    mira.querySelector("line").setAttribute("x2", px);
+    mira.querySelector("circle").setAttribute("cx", px);
+    mira.querySelector("circle").setAttribute("cy", py);
+
+    const dica = cx.querySelector(".dica");
+    const un = (METRICA[cx.dataset.metrica] || ["", ""])[1];
+    dica.hidden = false;
+    dica.innerHTML = `<b>${esc(fmt(melhor[1], 2))}${un ? " " + esc(un) : ""}</b>
+      <span>${esc(diaHora(melhor[0]))}</span>`;
+    dica.style.left = `${(px / G.W) * 100}%`;
+  });
+  document.body.addEventListener("mouseout", (e) => {
+    const cx = e.target.closest(".cx.grafico");
+    if (!cx || cx.contains(e.relatedTarget)) return;
+    cx.querySelectorAll(".mira").forEach((m) => { m.hidden = true; });
+    cx.querySelectorAll(".dica").forEach((d) => { d.hidden = true; });
   });
 
   let t;

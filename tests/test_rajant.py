@@ -85,11 +85,24 @@ class TestManifesto:
     def test_nao_declara_escrita(self) -> None:
         assert MANIFESTO.somente_leitura is True
 
+    def test_a_consulta_e_montada_e_filtravel(self) -> None:
+        """Guardar a PromQL pronta impediria filtrar por equipamento sem
+        cirurgia de texto — e é isso que o gráfico de um aparelho faz."""
+        from plataforma.modulos.rajant import POR_METRICA
+
+        snr = POR_METRICA["rf_snr_db"]
+        assert snr.promql() == "min by (bc, ip) (rajant_peer_snr_db)"
+        assert snr.promql('ip="10.0.0.1"') == (
+            'min by (bc, ip) (rajant_peer_snr_db{ip="10.0.0.1"})'
+        )
+        direta = POR_METRICA["disp_temperatura_c"]
+        assert direta.promql('ip="10.0.0.1"') == 'rajant_temperatura_c{ip="10.0.0.1"}'
+
     def test_consulta_agregada_diz_como_agregou(self) -> None:
         """Número que resume N enlaces sem dizer que resume é número que
         alguém vai ler como medida direta."""
         for c in CONSULTAS:
-            if " by (" in c.promql:
+            if c.agregador:
                 assert c.agregacao, f"{c.metrica} agrega e não declara como"
 
 
@@ -230,7 +243,7 @@ class TestColeta:
     async def test_prometheus_fora_do_ar_nao_derruba_o_parque(self) -> None:
         """A distinção que se repete em toda a plataforma: 'não consegui
         perguntar' não é 'perguntei e está ruim'."""
-        r = await modulo({}, falhar={c.promql for c in CONSULTAS}).coletar(ALVOS)
+        r = await modulo({}, falhar={c.promql() for c in CONSULTAS}).coletar(ALVOS)
         assert r.observacoes == ()
         assert r.alvos_falha == len(ALVOS), "o parque inteiro conta como não lido"
         assert not r.completa

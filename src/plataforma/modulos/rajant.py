@@ -63,15 +63,28 @@ from plataforma.modulos.contrato import (
 
 @dataclass(frozen=True)
 class Consulta:
-    """Uma pergunta ao Prometheus e o nome canônico da resposta."""
+    """Uma pergunta ao Prometheus e o nome canônico da resposta.
 
-    promql: str
+    A PromQL é **montada**, não escrita: guardar a string pronta impediria
+    filtrar por equipamento sem cirurgia de texto, e é exatamente isso que o
+    gráfico de um aparelho precisa fazer.
+    """
+
+    #: Nome da métrica no exportador, sem agregação nem filtro.
+    fonte: str
     metrica: str
-    #: Como N virou 1. Vazio quando a série já é uma por equipamento.
+    #: `min`, `max`, `sum` — vazio quando a série já é uma por equipamento.
+    agregador: str = ""
+    #: Como N virou 1, em português, para a tela poder dizer.
     agregacao: str = ""
     #: Multiplica o valor bruto — usado onde a unidade do exportador difere
     #: da unidade canônica.
     fator: float = 1.0
+
+    def promql(self, filtro: str = "") -> str:
+        """A consulta pronta, opcionalmente restrita a um equipamento."""
+        alvo = f"{self.fonte}{{{filtro}}}" if filtro else self.fonte
+        return f"{self.agregador} by (bc, ip) ({alvo})" if self.agregador else alvo
 
 
 #: O que a plataforma traz para dentro. Lista curta de propósito: o que cabe
@@ -96,48 +109,22 @@ CONSULTAS: tuple[Consulta, ...] = (
     Consulta("rajant_gps_altitude_m", "geo_altitude_m"),
     Consulta("rajant_gps_vel_kmh", "geo_velocidade_kmh"),
     # -- por interface de rádio: um BC tem de 2 a 4 ------------------------
-    Consulta(
-        "max by (bc, ip) (rajant_radio_ruido_dbm)",
-        "rf_ruido_dbm",
-        "pior_entre_radios",
-    ),
-    Consulta(
-        "max by (bc, ip) (rajant_radio_txpower_dbm)",
-        "rf_potencia_tx_dbm",
-        "maior_entre_radios",
-    ),
-    Consulta(
-        "sum by (bc, ip) (rajant_radio_clientes)",
-        "rf_clientes_associados",
-        "soma_dos_radios",
-    ),
-    Consulta(
-        "sum by (bc, ip) (rajant_radio_peers_ativos)",
-        "malha_peers_ativos",
-        "soma_dos_radios",
-    ),
+    Consulta("rajant_radio_ruido_dbm", "rf_ruido_dbm", "max", "pior_entre_radios"),
+    Consulta("rajant_radio_txpower_dbm", "rf_potencia_tx_dbm", "max", "maior_entre_radios"),
+    Consulta("rajant_radio_clientes", "rf_clientes_associados", "sum", "soma_dos_radios"),
+    Consulta("rajant_radio_peers_ativos", "malha_peers_ativos", "sum", "soma_dos_radios"),
     # -- por vizinho: aqui a compressão vale 108 séries para 3 -------------
-    Consulta(
-        "min by (bc, ip) (rajant_peer_snr_db)",
-        "rf_snr_db",
-        "pior_entre_vizinhos",
-    ),
-    Consulta(
-        "min by (bc, ip) (rajant_peer_sinal_dbm)",
-        "rf_rssi_dbm",
-        "pior_entre_vizinhos",
-    ),
-    Consulta(
-        "min by (bc, ip) (rajant_peer_custo)",
-        "malha_custo_link",
-        "melhor_entre_vizinhos",
-    ),
-    Consulta(
-        "max by (bc, ip) (rajant_peer_taxa_mbps)",
-        "rf_capacidade_estimada_mbps",
-        "melhor_entre_vizinhos",
-    ),
+    Consulta("rajant_peer_snr_db", "rf_snr_db", "min", "pior_entre_vizinhos"),
+    Consulta("rajant_peer_sinal_dbm", "rf_rssi_dbm", "min", "pior_entre_vizinhos"),
+    Consulta("rajant_peer_custo", "malha_custo_link", "min", "melhor_entre_vizinhos"),
+    Consulta("rajant_peer_taxa_mbps", "rf_capacidade_estimada_mbps", "max",
+             "melhor_entre_vizinhos"),
 )
+
+#: Da métrica canônica de volta à consulta — é o que o gráfico precisa para
+#: perguntar "como estava o SNR deste rádio nas últimas 6 horas".
+POR_METRICA: dict[str, Consulta] = {c.metrica: c for c in CONSULTAS}
+
 
 #: A vizinhança da malha, série a série — esta **não** agrega, porque o que
 #: interessa aqui é justamente quem é o outro lado. É a única consulta cara do
@@ -366,12 +353,12 @@ class ModuloRajant:
         async with httpx.AsyncClient(transport=self.transporte) as cliente:
             for consulta in CONSULTAS:
                 try:
-                    series = await self.prometheus.instantanea(consulta.promql, cliente)
+                    series = await self.prometheus.instantanea(consulta.promql(), cliente)
                 except Exception as erro:  # noqa: BLE001
                     # Uma consulta que falha não invalida as outras: métrica
                     # ausente no exportador antigo é caso normal, não pane.
                     consultas_falhas += 1
-                    recusas.append(f"{consulta.promql}: {erro}")
+                    recusas.append(f"{consulta.promql()}: {erro}")
                     continue
 
                 parcial = casar(series, alvos)

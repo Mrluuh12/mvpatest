@@ -37,6 +37,8 @@ WEB = Path(__file__).parent / "web"
 
 VAR_BANCO = "PLATAFORMA_BANCO"
 VAR_INVENTARIO = "PLATAFORMA_INVENTARIO"
+#: Onde vive o Prometheus que o exportador alimenta — a fonte das séries.
+VAR_PROMETHEUS = "PLATAFORMA_PROMETHEUS"
 PADRAO_INVENTARIO = "dados/inventario.json"
 INTERVALO_RECARGA_S = 20
 
@@ -376,6 +378,53 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
 
         async with fonte._engine.connect() as conexao:
             return await leituras_de(conexao, sujeito)
+
+    @app.get("/api/v1/serie", tags=["plataforma"])
+    async def serie(chave: str, metrica: str, janela: str = "6h") -> dict:
+        """A série de uma métrica de um equipamento, para o gráfico.
+
+        A plataforma não guarda série: ela pergunta para quem tem. Métrica sem
+        origem de série devolve `tipo: "ausente"` **com o motivo** — desenhar
+        uma linha de um ponto só pareceria informação.
+        """
+        from . import series
+
+        try:
+            segundos = series.segundos_da_janela(janela)
+        except series.JanelaInvalida as erro:
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+        if metrica == "ativo_alcancavel":
+            if fonte._engine is None:
+                return series.sem_serie(metrica).para_json()
+            async with fonte._engine.connect() as conexao:
+                return (
+                    await series.de_transicoes(conexao, chave, segundos)
+                ).para_json()
+
+        url = os.environ.get(VAR_PROMETHEUS)
+        if not series.tem_serie(metrica) or not url:
+            resultado = series.sem_serie(metrica)
+            if series.tem_serie(metrica) and not url:
+                resultado.motivo = (
+                    "esta métrica tem série no Prometheus, mas a plataforma não "
+                    f"sabe onde ele está — defina {VAR_PROMETHEUS}"
+                )
+            return resultado.para_json()
+
+        alvo = fonte.repo.dispositivo(chave)
+        if alvo is None:
+            raise HTTPException(status_code=404, detail=f"dispositivo {chave!r} não existe")
+        if not alvo.ip:
+            resultado = series.sem_serie(metrica)
+            resultado.motivo = "sem IP no cadastro, não há como filtrar a série"
+            return resultado.para_json()
+        try:
+            return (
+                await series.de_prometheus(url, metrica, alvo.ip, segundos)
+            ).para_json()
+        except Exception as erro:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"Prometheus: {erro}") from erro
 
     @app.get("/api/v1/vizinhos", tags=["inventario"])
     async def ver_vizinhos(chave: str, quando: datetime | None = None) -> list[dict]:

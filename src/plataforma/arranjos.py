@@ -42,6 +42,7 @@ class TipoCartao(StrEnum):
     DISPOSITIVOS = "dispositivos"
     IDENTIDADE = "identidade"
     VIZINHOS = "vizinhos"
+    GRAFICO = "grafico"
     IMAGENS = "imagens"
     TEXTO = "texto"
     ACOES = "acoes"
@@ -97,6 +98,12 @@ CATALOGO: tuple[DefCartao, ...] = (
         tipo=TipoCartao.VIZINHOS, titulo_padrao="Vizinhança", contextos=(D,),
         descricao="Com quem este equipamento está falando agora, e desde quando.",
         opcoes=("limite",),
+    ),
+    DefCartao(
+        tipo=TipoCartao.GRAFICO, titulo_padrao="Gráfico", contextos=(D,),
+        descricao="Uma métrica ao longo do tempo. A série vem de quem a guarda "
+                  "— o Prometheus, ou as transições de estado.",
+        opcoes=("metrica", "janela"),
     ),
     DefCartao(
         tipo=TipoCartao.IMAGENS, titulo_padrao="Imagens", contextos=(A, D),
@@ -204,6 +211,10 @@ ARRANJO_DISPOSITIVO_PADRAO = Arranjo(
         Cartao(tipo=TipoCartao.IDENTIDADE, largura=1),
         Cartao(tipo=TipoCartao.TELEMETRIA, largura=1),
         Cartao(tipo=TipoCartao.IMAGENS, largura=1),
+        Cartao(
+            tipo=TipoCartao.GRAFICO, largura=2,
+            opcoes={"metrica": "rf_snr_db", "janela": "6h"},
+        ),
         Cartao(tipo=TipoCartao.VIZINHOS, largura=2),
         Cartao(tipo=TipoCartao.TRANSICOES, largura=2),
         Cartao(tipo=TipoCartao.AUDITORIA, largura=4),

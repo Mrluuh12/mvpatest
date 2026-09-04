@@ -496,6 +496,42 @@ níveis 0 a 2 seguem recusados pelo próprio manifesto.
 | ot_nivel3 | 294 | **286** (era 0) |
 | ot_nivel2 | 26 | 0, e para sempre |
 
+## Gráficos
+
+A plataforma **não guarda série** — ela pergunta para quem tem. Isso foi
+decisão, não esquecimento: o Prometheus do exportador já guarda, e muito
+melhor; duplicar criaria duas verdades sobre o mesmo número.
+
+Três origens, e a diferença entre elas é o desenho:
+
+| Origem | O quê | Forma |
+|---|---|---|
+| **Prometheus** | as métricas que o módulo Rajant lê | linha |
+| **Transições** | disponibilidade | faixas |
+| **Nenhuma** | o resto (SNMP, ICMP) | uma frase dizendo por quê |
+
+**A consulta fica à vista, embaixo do gráfico.** `min by (bc, ip)
+(rajant_peer_snr_db{ip="10.188.99.1"}) [passo 90s]` — quem desconfiar do
+número pode conferir. Gráfico que não pode ser conferido é gráfico em que
+ninguém confia depois da primeira surpresa. E a consulta é **montada** da
+mesma tabela que a coleta usa, então cartão e gráfico não podem divergir: se
+um mostra o pior SNR entre vizinhos, o outro mostra o mesmo.
+
+### Disponibilidade não é uma linha
+
+A tabela guarda o instante exato de cada mudança, então a resposta certa são
+**faixas**, não pontos de dez em dez minutos — que perderiam uma queda de dois
+minutos registrada com precisão de segundo.
+
+E o estado incerto é **hachurado**, não âmbar. Vermelho e âmbar têm ΔE 4,6 em
+deuteranopia: indistinguíveis. Nas pastilhas isso passa porque há texto junto
+e a cor é reforço; num desenho ela seria o único sinal.
+
+### Ausência não vira linha reta
+
+Métrica que só tem a última leitura devolve a frase, não um desenho. Uma linha
+feita de um ponto só parece informação — e é pior que gráfico nenhum.
+
 ## Cofre de credenciais
 
 O SNMP é o primeiro módulo que precisa de segredo, e é por isso que o cofre
