@@ -36,6 +36,8 @@ VAR_ZONA = "PLATAFORMA_ZONA"
 #: URL do Prometheus que o exportador Rajant alimenta. Ausente = módulo não
 #: carrega.
 VAR_PROMETHEUS = "PLATAFORMA_PROMETHEUS"
+#: Nome da credencial SNMP no cofre. Ausente = módulo não carrega.
+VAR_CREDENCIAL_SNMP = "PLATAFORMA_SNMP_CREDENCIAL"
 
 
 async def alvos_do_inventario(
@@ -115,17 +117,54 @@ class Coletor:
         async with self.engine.begin() as conexao:
             self.ultimo[nome] = await gravar_coleta(conexao, nome, resultado)
 
-    def carregar_padrao(self) -> None:
+    async def carregar_padrao(self) -> None:
         """Carrega os módulos disponíveis para esta zona.
 
-        O Rajant só entra se houver Prometheus configurado. Carregá-lo sempre
-        faria toda instalação sem Prometheus acumular falha de um módulo que
-        ninguém pediu — e módulo que falha por não estar configurado ensina a
-        ignorar módulo que falha de verdade.
+        Cada um entra só se estiver configurado. Carregar sempre faria toda
+        instalação acumular falha de módulo que ninguém pediu — e módulo que
+        falha por não estar configurado ensina a ignorar módulo que falha de
+        verdade.
         """
         self.registro.registrar(ModuloIcmp())
         if url := os.environ.get(VAR_PROMETHEUS):
             self.registro.registrar(ModuloRajant(url))
+        await self._carregar_snmp()
+
+    async def _carregar_snmp(self) -> None:
+        """O SNMP é o primeiro módulo que precisa de segredo.
+
+        A credencial é aberta **aqui**, pelo coletor, que tem banco — o módulo
+        continua sem tocar em Postgres, como os demais. A zona é conferida na
+        abertura, que é a última linha antes de o segredo virar pacote UDP.
+        """
+        nome = os.environ.get(VAR_CREDENCIAL_SNMP)
+        if not nome:
+            return
+        from .db.credenciais import CofreSemChave, abrir, listar
+        from .modulos.snmp import Credencial, ModuloSnmp, SessaoPysnmp
+
+        try:
+            async with self.engine.connect() as conexao:
+                segredo = await abrir(conexao, nome, self.zona)
+                # A porta não é segredo: fica em claro nos atributos, para a
+                # tela poder mostrá-la sem descriptografar nada.
+                atributos = next(
+                    (c["atributos"] for c in await listar(conexao) if c["nome"] == nome),
+                    {},
+                )
+        except (CofreSemChave, PermissionError) as erro:
+            # Falha alto: um SNMP que silenciosamente não carrega é pior que um
+            # que não existe, porque a tela diz que a família está coberta.
+            raise SystemExit(f"credencial {nome!r}: {erro}") from erro
+        if segredo is None:
+            raise SystemExit(f"credencial {nome!r} não existe no cofre")
+        self.registro.registrar(
+            ModuloSnmp(
+                SessaoPysnmp(
+                    Credencial(**segredo), porta=int(atributos.get("porta", 161))
+                )
+            )
+        )
 
     async def rodar_uma_vez(self, nome: str = "icmp") -> dict[str, int]:
         await self.agendador.rodar_uma_vez(nome)
@@ -152,7 +191,7 @@ def _url(informada: str | None) -> str:
 async def _principal(url: str, zona: Zona, uma_vez: bool, modulo: str) -> int:
     engine = criar_engine(url)
     coletor = Coletor(engine, zona)
-    coletor.carregar_padrao()
+    await coletor.carregar_padrao()
     try:
         if uma_vez:
             resumo = await coletor.rodar_uma_vez(modulo)

@@ -29,6 +29,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -194,6 +195,31 @@ leitura = Table(
     Column("modulo", Text, nullable=False),
     Column("em", DateTime(timezone=True), nullable=False),
     Index("ix_leitura_metrica", "metrica"),
+)
+
+
+#: Segredos que a plataforma **usa** — comunidade SNMP, senha de API de
+#: fabricante. Diferente de senha de usuário: aquela só precisa ser conferida,
+#: e por isso vira hash irreversível; esta precisa ser *apresentada* ao
+#: equipamento, e por isso é cifrada com AES-256-GCM e volta em claro na hora
+#: do uso. A chave mora no ambiente, nunca no banco — quem leva o dump não
+#: leva as credenciais.
+credencial = Table(
+    "credencial",
+    metadata,
+    Column("nome", Text, primary_key=True),
+    Column("tipo", String(32), nullable=False),
+    # A zona onde esta credencial vale. Um coletor corporativo não pode usar
+    # credencial de OT nem por engano: a regra é a mesma dos módulos.
+    Column("zona", String(32), nullable=False),
+    Column("nonce", LargeBinary, nullable=False),
+    Column("segredo", LargeBinary, nullable=False),
+    #: O que **não** é segredo: usuário do v3, protocolos, porta. Fica em claro
+    #: para a tela poder mostrar sem descriptografar nada.
+    Column("atributos", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("criada_em", DateTime(timezone=True), nullable=False),
+    Column("criada_por", Text),
+    Index("ix_credencial_zona", "zona"),
 )
 
 

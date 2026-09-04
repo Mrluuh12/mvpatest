@@ -1,4 +1,4 @@
-# Plataforma TI + OT — marcos M0, M1, M2 e área ADM
+# Plataforma TI + OT — marcos M0 a M3 e área ADM
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -496,6 +496,74 @@ níveis 0 a 2 seguem recusados pelo próprio manifesto.
 | ot_nivel3 | 294 | **286** (era 0) |
 | ot_nivel2 | 26 | 0, e para sempre |
 
+## Cofre de credenciais
+
+O SNMP é o primeiro módulo que precisa de segredo, e é por isso que o cofre
+existe. Ele é **outra coisa** que senha de usuário, e a diferença define o
+desenho: senha só precisa ser *conferida* (um `scrypt` irreversível basta);
+credencial precisa ser *apresentada* ao equipamento — a comunidade SNMP viaja
+dentro do pacote UDP. Logo não pode ser hash: tem de voltar em claro na hora
+do uso.
+
+Daí quatro regras:
+
+- **A chave mora no ambiente, nunca no banco.** AES-256-GCM; quem levar o dump
+  leva ciphertext. Há teste que lê a coluna crua e falha se a comunidade
+  aparecer nela.
+- **Sem chave, o cofre se recusa a operar.** Não há degradação para texto
+  claro. Uma instalação mal configurada falha na partida, com a receita da
+  correção na mensagem — em vez de gravar comunidades em claro por dois anos.
+- **A API nunca devolve segredo.** Nem mascarado, nem para administrador.
+  Listar mostra nome, tipo, zona e atributos não sensíveis (a porta, o usuário
+  do v3).
+- **O nome da credencial é o AAD da cifra.** Um ciphertext copiado da linha
+  `snmp-ot` para a linha `snmp-corp` não abre — a cifra prende o segredo ao
+  lugar dele.
+
+Credencial tem zona, e ela é conferida na abertura: é a última linha antes de
+o segredo virar pacote na rede.
+
+```bash
+export PLATAFORMA_CHAVE=$(python -c \
+  "from plataforma.db.credenciais import gerar_chave; print(gerar_chave())")
+export PLATAFORMA_SNMP_CREDENCIAL=snmp-mina
+```
+
+## Módulo SNMP declarativo (marco M3)
+
+O módulo não conhece fabricante nenhum: executa um **perfil**, que diz quais
+OIDs ler e para que métrica canônica cada um vai. Suportar um switch novo é
+escrever quinze linhas de configuração, não uma classe.
+
+**Nunca escreve.** Não há `set_cmd` no arquivo, e não é esquecimento: SNMP de
+escrita em equipamento de rede de mina é como se derruba uma frota.
+
+### Três armadilhas que o perfil evita
+
+**Contador de 32 bits.** `ifInOctets` vira a zero a cada 4 GB — num enlace de
+1 Gb/s são 34 segundos. Uma série montada sobre ele mostra quedas que nunca
+aconteceram. O perfil de rede lê `ifHCInOctets` da ifXTable, e o dicionário
+canônico já pedia isso em letras miúdas.
+
+**`sysUpTime` está em centésimos.** É o erro clássico do primeiro coletor: um
+equipamento ligado há 3 dias vira 300 dias no painel. O fator está declarado,
+à vista.
+
+**Interface não é dispositivo.** Um switch de 48 portas tem 48 conjuntos de
+contadores; o sujeito da leitura passa a ser `chave/porta`. E o nome da porta
+está na ifXTable enquanto o estado dela está na ifTable, indexadas pelo mesmo
+`ifIndex` — emitir tabela a tabela fazia a mesma porta virar dois sujeitos,
+`sw-01/Gi0/1` e `sw-01/1`. Foi um agente SNMP de verdade que revelou isso; um
+mock teria repetido o meu engano.
+
+### Concorrência não é otimização, é viabilidade
+
+Em série, um parque mudo custa a soma de todos os timeouts: 36 alvos × 11
+operações × 2 s dão **oito minutos por ciclo**, num módulo cujo intervalo é de
+dois. Com um semáforo de 20, a mesma coleta contra o inventário real levou
+**8,7 s**. O limite existe porque o outro extremo — todos de uma vez — abriria
+centenas de sockets UDP e afogaria o próprio coletor.
+
 ## Contas, autorização e auditoria
 
 A primeira conta é criada por quem instala. **Não há senha padrão embutida** —
@@ -549,8 +617,6 @@ inúteis, não sessões válidas.
 
 - Módulos de outros fabricantes: Astra/InfiNet (18 rádios PtP/PtMP), MEMS
   Michelin (46 gateways de pneu), PTX (97 IHM de bordo)
-- Módulo SNMP declarativo — a família `interface`, 12 métricas de porta, está
-  inteiramente vazia (marco M3)
 - Gráficos e relatórios. A série histórica **não** será reimplementada aqui: o
   Prometheus do exportador já a guarda, e duplicá-la criaria duas verdades
   sobre o mesmo número. Falta o cartão de gráfico e o endpoint de consulta.
