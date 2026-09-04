@@ -70,6 +70,9 @@ Abra `http://SEU-HOST:8000`. A tela pede login. A partir daí:
 - **Gráfico** na ficha do aparelho, com janelas de 30m a 7d. Embaixo dele fica
   a consulta que produziu o desenho — se o número parecer estranho, dá para
   conferir na fonte.
+- **Relatórios** (aba própria): disponibilidade por frota e função de negócio,
+  e cobertura da coleta. Botão de baixar CSV no canto. As ressalvas aparecem
+  em faixa âmbar embaixo da tabela e vão junto no CSV.
 
 ## 5. Ligar a coleta
 
@@ -180,3 +183,7 @@ as pessoas param de rodar.
 4. **O gráfico não inventa.** Ponha um cartão de gráfico numa métrica de SNMP
    (`iface_bytes_rx`, por exemplo). Ele deve **dizer que não tem série**, não
    desenhar uma linha reta a partir da última leitura.
+5. **O relatório não esconde o que não sabe.** Abra Relatórios →
+   Disponibilidade. A faixa âmbar embaixo tem de dizer quantos equipamentos
+   ficaram fora da média por falta de observação. Se ela sumir, desconfie: ou
+   todo o parque foi sondado, ou alguém tirou a ressalva.
