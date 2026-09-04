@@ -286,6 +286,33 @@ async def _gravar_saude(
     )
 
 
+def estado_no_inicio(mudancas, desde, alcancavel_agora: bool) -> bool:
+    """Em que estado o equipamento estava quando a janela começou.
+
+    A ordem importa e já custou caro:
+
+    1. Houve transição **antes** da janela? O estado é o `para` da última.
+    2. Não houve, mas há transição **dentro**? O estado é o `de` da primeira —
+       ela própria diz de onde veio.
+    3. Nenhuma transição? Só então o estado corrente vale para trás.
+
+    Pular o passo 2 e cair direto no estado corrente é o defeito que apareceu
+    no relatório: um equipamento que passou 12 h de pé e caiu no meio da
+    janela era contado como caído desde o início — 0% em vez de 50%. Ele
+    errava exatamente nos equipamentos sobre os quais o relatório é feito, e
+    acertava nos que nunca mudaram.
+
+    ``mudancas`` precisa vir ordenada por instante.
+    """
+    anteriores = [m for m in mudancas if m.em <= desde]
+    if anteriores:
+        return anteriores[-1].para
+    dentro = [m for m in mudancas if m.em > desde]
+    if dentro:
+        return dentro[0].de if dentro[0].de is not None else not dentro[0].para
+    return alcancavel_agora
+
+
 async def disponibilidade(
     conexao: AsyncConnection, sujeito: str, desde: datetime
 ) -> float | None:
@@ -296,7 +323,7 @@ async def disponibilidade(
     """
     linhas = (
         await conexao.execute(
-            select(transicao.c.para, transicao.c.em)
+            select(transicao.c.de, transicao.c.para, transicao.c.em)
             .where(transicao.c.sujeito == sujeito)
             .order_by(transicao.c.em)
         )
@@ -312,10 +339,7 @@ async def disponibilidade(
     if fim <= desde:
         return None
 
-    # Estado no início da janela: o da última transição anterior a `desde`;
-    # sem nenhuma, assume-se o estado corrente retroagido.
-    anteriores = [ln for ln in linhas if ln.em <= desde]
-    vivo = anteriores[-1].para if anteriores else corrente.alcancavel
+    vivo = estado_no_inicio(linhas, desde, corrente.alcancavel)
 
     marco = desde
     acumulado = 0.0

@@ -19,10 +19,11 @@ import asyncio
 import contextlib
 import os
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import Cookie, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -378,6 +379,57 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
 
         async with fonte._engine.connect() as conexao:
             return await leituras_de(conexao, sujeito)
+
+    @app.get("/api/v1/relatorios", tags=["relatorios"])
+    async def listar_relatorios() -> list[dict]:
+        from .db.relatorios import RELATORIOS
+
+        return [
+            {"nome": n, "rotulo": d.rotulo, "descricao": d.descricao}
+            for n, d in RELATORIOS.items()
+        ]
+
+    @app.get("/api/v1/relatorios/{nome}", tags=["relatorios"])
+    async def ver_relatorio(
+        nome: str, janela: str = "7d", formato: str = "json"
+    ) -> Response:
+        """Um relatório sobre um período — com as ressalvas junto do número.
+
+        O CSV leva as ressalvas em comentário no topo: quem abrir a planilha
+        três semanas depois precisa das mesmas que quem viu a tela.
+        """
+        from . import series
+        from .db import relatorios
+
+        if fonte._engine is None:
+            raise HTTPException(status_code=503, detail="sem banco configurado")
+        try:
+            segundos = series.segundos_da_janela(janela)
+        except series.JanelaInvalida as erro:
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+        ate = datetime.now(UTC)
+        desde = ate - timedelta(seconds=segundos)
+        async with fonte._engine.connect() as conexao:
+            try:
+                r = await relatorios.gerar(conexao, nome, desde, ate)
+            except KeyError as erro:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"relatório {nome!r} não existe; há "
+                    f"{sorted(relatorios.RELATORIOS)}",
+                ) from erro
+
+        if formato == "csv":
+            return Response(
+                content=relatorios.para_csv(r),
+                media_type="text/csv; charset=utf-8",
+                headers={
+                    "content-disposition":
+                        f'attachment; filename="{nome}-{ate:%Y%m%d}.csv"'
+                },
+            )
+        return JSONResponse(jsonable_encoder(r.para_json()))
 
     @app.get("/api/v1/serie", tags=["plataforma"])
     async def serie(chave: str, metrica: str, janela: str = "6h") -> dict:

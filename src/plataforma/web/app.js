@@ -88,6 +88,7 @@
     sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
     arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {},
+    relSel: null, relJanela: "7d", relLista: null,
   };
 
   /* três situações distintas, nunca duas */
@@ -849,6 +850,55 @@
   }
 
   /* ============================ outras abas ============================= */
+  /* ============================= relatórios ============================= */
+
+  const JANELAS_REL = ["24h", "7d", "30d", "90d"];
+
+  async function pintarRelatorios() {
+    const nome = S.relSel || "disponibilidade_frota";
+    const janela = S.relJanela || "7d";
+    $("centro").innerHTML = `<div class="grade g1"><section class="cx">
+      <header><h2>Relatórios</h2></header>
+      <div class="conteudo"><p class="nada">carregando…</p></div></section></div>`;
+
+    if (!S.relLista) S.relLista = await api("/api/v1/relatorios").catch(() => []);
+    const r = await api(
+      `/api/v1/relatorios/${encodeURIComponent(nome)}?janela=${janela}`
+    ).catch((e) => ({ erro: e.message }));
+
+    const abas = S.relLista.map((x) => `<button class="bt ${x.nome === nome ? "cheio" : ""}"
+      data-rel="${esc(x.nome)}" title="${esc(x.descricao)}">${esc(x.rotulo)}</button>`).join("");
+    const janelas = JANELAS_REL.map((j) => `<button class="janela"
+      data-rel-janela="${j}" aria-current="${j === janela}">${j}</button>`).join("");
+
+    let corpo;
+    if (r.erro) corpo = `<p class="nada">${esc(r.erro)}</p>`;
+    else {
+      const cab = r.colunas.map((c) => `<th>${esc(c.replace(/_/g, " "))}</th>`).join("");
+      const linhas = r.linhas.map((l) => `<tr>${r.colunas.map((c) => {
+        const v = l[c];
+        const num = typeof v === "number";
+        return `<td class="${num ? "mono num" : ""}">${
+          num ? esc(v.toLocaleString("pt-BR")) : esc(v)}</td>`;
+      }).join("")}</tr>`).join("");
+      corpo = `<div class="rol"><table>
+        <thead><tr>${cab}</tr></thead>
+        <tbody>${linhas || `<tr><td colspan="${r.colunas.length}" class="nulo">
+          sem linhas no período</td></tr>`}</tbody></table></div>
+        ${(r.notas || []).map((n) => `<p class="ressalva">${esc(n)}</p>`).join("")}`;
+    }
+
+    $("centro").innerHTML = `<div class="grade g1"><section class="cx">
+      <header><h2>${esc(r.titulo || "Relatórios")}</h2>
+        <span class="dir">${janelas}</span></header>
+      <div class="barra-rel">${abas}
+        <a class="bt" style="margin-left:auto"
+           href="/api/v1/relatorios/${encodeURIComponent(nome)}?janela=${janela}&formato=csv"
+           download>${ico.lista} Baixar CSV</a></div>
+      <div class="conteudo rente">${corpo}</div>
+    </section></div>`;
+  }
+
   const pintarCobertura = () => {
     const linhas = S.sinais.map((s) => `<tr><td class="mono">${esc(s.familia)}</td>
       <td>${s.disponivel ? `<span class="selo verde">coletando</span>`
@@ -1032,6 +1082,7 @@
   async function pintarAba() {
     if (S.aba === "coleta") return $("centro").innerHTML = `<div class="grade g1">${cxColeta()}</div>`;
     if (S.aba === "cobertura") return pintarCobertura();
+    if (S.aba === "relatorios") return pintarRelatorios();
     if (S.aba === "cadastro") return pintarCadastro();
     if (!S.sel) return;
     const f = await ficha(S.sel);
@@ -1163,6 +1214,10 @@
     if (S.editandoTela && S.arranjo && S.sel) {
       if (await editarTela(e, contextoAtual(await ficha(S.sel)))) return;
     }
+    const br = e.target.closest("[data-rel]");
+    if (br) { S.relSel = br.dataset.rel; await pintarRelatorios(); return; }
+    const brj = e.target.closest("[data-rel-janela]");
+    if (brj) { S.relJanela = brj.dataset.relJanela; await pintarRelatorios(); return; }
     const bj = e.target.closest("[data-janela-ir]");
     if (bj && S.dispSel) {
       const cartao = bj.closest("[data-cartao]");

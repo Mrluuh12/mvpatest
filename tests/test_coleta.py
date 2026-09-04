@@ -301,3 +301,68 @@ class TestSelecaoDeAlvos:
         await self._semear(engine)
         alvos = await alvos_do_inventario(engine, Zona.CORPORATIVA)
         assert {a["chave"] for a in alvos} == {"k-corp", "k-sw"}
+
+
+class TestEstadoNoInicioDaJanela:
+    """Em que estado o equipamento estava quando a janela começou.
+
+    O defeito que estes testes guardam custou três lugares: relatório, gráfico
+    e cálculo de disponibilidade caíam no estado **corrente** quando não havia
+    transição anterior à janela — ignorando que a primeira transição *dentro*
+    dela já diz de onde veio. Um equipamento que passou 12 h de pé e caiu no
+    meio era contado como caído desde o início: 0% em vez de 50%.
+
+    O pior é que ele acertava nos equipamentos que nunca mudaram, e errava
+    exatamente naqueles sobre os quais o relatório é feito.
+    """
+
+    def _m(self, de, para, em):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(de=de, para=para, em=em)
+
+    async def test_transicao_anterior_manda(self) -> None:
+        from plataforma.db.coleta import estado_no_inicio
+
+        antes = [self._m(True, False, T0 - timedelta(hours=1))]
+        assert estado_no_inicio(antes, T0, True) is False
+
+    async def test_sem_anterior_a_primeira_de_dentro_diz_de_onde_veio(self) -> None:
+        from plataforma.db.coleta import estado_no_inicio
+
+        dentro = [self._m(True, False, T0 + timedelta(hours=12))]
+        assert estado_no_inicio(dentro, T0, alcancavel_agora=False) is True
+
+    async def test_sem_transicao_nenhuma_o_corrente_retroage(self) -> None:
+        from plataforma.db.coleta import estado_no_inicio
+
+        assert estado_no_inicio([], T0, alcancavel_agora=True) is True
+        assert estado_no_inicio([], T0, alcancavel_agora=False) is False
+
+    async def test_de_nulo_cai_no_inverso_do_para(self) -> None:
+        """Transição antiga pode não ter `de` — a primeira de um equipamento
+        recém-descoberto. O inverso do `para` é o palpite certo."""
+        from plataforma.db.coleta import estado_no_inicio
+
+        dentro = [self._m(None, False, T0 + timedelta(hours=1))]
+        assert estado_no_inicio(dentro, T0, alcancavel_agora=False) is True
+
+    async def test_disponibilidade_de_quem_caiu_no_meio(self, engine) -> None:
+        """O caso real, ponta a ponta: 12 h de pé, cai, e a janela de 24 h
+        devolve 50% — não 0%."""
+        from plataforma.db.coleta import disponibilidade
+        from plataforma.db.esquema import estado, transicao
+
+        meio = T0 + timedelta(hours=12)
+        async with engine.begin() as c:
+            await c.execute(
+                transicao.insert().values(sujeito="d1", de=True, para=False, em=meio)
+            )
+            await c.execute(
+                estado.insert().values(
+                    sujeito="d1", alcancavel=False, qualidade="boa",
+                    visto_em=T0 + timedelta(hours=24),
+                )
+            )
+        async with engine.connect() as c:
+            assert await disponibilidade(c, "d1", T0) == pytest.approx(50.0, abs=0.1)

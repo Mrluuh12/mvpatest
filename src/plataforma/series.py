@@ -33,6 +33,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from plataforma.db.coleta import estado_no_inicio
 from plataforma.db.esquema import estado, transicao
 from plataforma.dicionario import POR_NOME
 from plataforma.modulos.rajant import POR_METRICA
@@ -176,7 +177,7 @@ async def de_transicoes(
 
     mudancas = (
         await conexao.execute(
-            select(transicao.c.para, transicao.c.em)
+            select(transicao.c.de, transicao.c.para, transicao.c.em)
             .where(transicao.c.sujeito == sujeito)
             .order_by(transicao.c.em)
         )
@@ -195,8 +196,7 @@ async def de_transicoes(
             motivo="este equipamento nunca foi sondado",
         )
 
-    anteriores = [m for m in mudancas if m.em <= inicio]
-    vivo = anteriores[-1].para if anteriores else corrente.alcancavel
+    vivo = estado_no_inicio(mudancas, inicio, corrente.alcancavel)
 
     faixas: list[dict] = []
     marco = inicio

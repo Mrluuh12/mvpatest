@@ -532,6 +532,39 @@ e a cor é reforço; num desenho ela seria o único sinal.
 Métrica que só tem a última leitura devolve a frase, não um desenho. Uma linha
 feita de um ponto só parece informação — e é pior que gráfico nenhum.
 
+## Relatórios
+
+Um relatório aqui devolve **as ressalvas junto do número**, e elas não são
+rodapé decorativo: dizem quantos equipamentos ficaram fora da conta e por quê.
+*"Disponibilidade de 94%"* sem *"de 22 dos 46 sondados"* é número que alguém
+defende numa reunião sem saber o que está defendendo.
+
+| Relatório | Responde |
+|---|---|
+| **Disponibilidade** | por frota e função de negócio, com a média **e o pior** ao lado |
+| **Cobertura** | o que está sendo vigiado (responde ou não) versus medido (tem número) |
+
+A média de uma frota esconde a máquina que está mal; as duas colunas juntas,
+não. E equipamento nunca sondado **fica fora da média** em vez de entrar como
+zero — contá-lo assim rebaixaria a frota por falta de coleta, que é problema
+de quem opera a plataforma, não da mina.
+
+O CSV leva as ressalvas em comentário no topo. Quem abrir a planilha três
+semanas depois precisa das mesmas que quem viu a tela.
+
+### O defeito que os relatórios revelaram
+
+O estado no início da janela caía no estado **corrente** quando não havia
+transição anterior — ignorando que a primeira transição *dentro* da janela já
+diz de onde veio. Um equipamento que passou 12 h de pé e caiu no meio era
+contado como caído desde o início: **0% em vez de 50%**.
+
+Estava em três lugares — relatório, gráfico de disponibilidade e cálculo de
+disponibilidade — e é o pior tipo de defeito: acertava nos equipamentos que
+nunca mudaram e errava exatamente naqueles sobre os quais o relatório é feito.
+O cálculo virou uma função só, `estado_no_inicio`, com os três casos
+ordenados e testados.
+
 ## Cofre de credenciais
 
 O SNMP é o primeiro módulo que precisa de segredo, e é por isso que o cofre
