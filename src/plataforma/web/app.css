@@ -16,6 +16,10 @@
   --apagado:#7C8DA5;
 
   --azul:#1A4E9B;
+  /* Cor de marca de dado, própria e validada nos dois fundos pelo
+     scripts/validate_palette.js. O --azul do modo escuro é claro demais para
+     barra e linha (L 0,71, fora da faixa); este passa nos seis testes. */
+  --dado:#1A4E9B;
   --azul-claro:#E9F0FA;
   --azul-escuro:#123A76;
 
@@ -37,6 +41,7 @@
     --linha:#1F2C42; --linha-forte:#2F4160;
     --texto:#E5EDF8; --texto-2:#B0C1D8; --apagado:#7B8DA8;
     --azul:#6BA5EE; --azul-claro:#14283F; --azul-escuro:#8CBCF8;
+    --dado:#5B93D8;
     --verde:#5EC68C; --verde-fundo:#112C1F;
     --ambar:#DCB55C; --ambar-fundo:#2C2511;
     --vermelho:#EC8880; --vermelho-fundo:#301715;
@@ -51,6 +56,7 @@
   --linha:#1F2C42; --linha-forte:#2F4160;
   --texto:#E5EDF8; --texto-2:#B0C1D8; --apagado:#7B8DA8;
   --azul:#6BA5EE; --azul-claro:#14283F; --azul-escuro:#8CBCF8;
+  --dado:#5B93D8;
   --verde:#5EC68C; --verde-fundo:#112C1F;
   --ambar:#DCB55C; --ambar-fundo:#2C2511;
   --vermelho:#EC8880; --vermelho-fundo:#301715;
@@ -561,7 +567,7 @@ tr.totais td{border-top:1.5px solid var(--linha-forte);font-weight:600;
 @media (max-width:1200px){.kpis{grid-template-columns:repeat(3,1fr)}}
 @media (max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}}
 .kpi{background:var(--cartao);border:1px solid var(--linha);border-radius:var(--raio);
-  padding:11px 13px;display:flex;flex-direction:column;gap:1px;min-width:0}
+  padding:11px 13px 13px;display:flex;flex-direction:column;gap:1px;min-width:0}
 .kpi .rot{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;
   color:var(--apagado)}
 .kpi b{font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
@@ -643,5 +649,56 @@ td.aviso,dd.aviso{color:var(--ambar);font-weight:600}
 .sentido .par span{font-size:10.5px;color:var(--texto-2)}
 
 .painel-radio{position:sticky;top:14px;max-height:calc(100vh - 130px);overflow:auto}
+/* A qualidade do vizinho vai numa marca à esquerda da linha, não numa pastilha:
+   no painel estreito a pastilha empurrava a tabela para fora. */
+table.viz td:first-child{border-left:3px solid transparent;padding-left:7px}
+table.viz tr.q-ok td:first-child{border-left-color:var(--verde)}
+table.viz tr.q-atencao td:first-child{border-left-color:var(--ambar)}
+table.viz tr.q-mau td:first-child{border-left-color:var(--vermelho)}
+.painel-radio header .dir{display:flex;gap:5px}
 .sub-titulo{font-size:11px;text-transform:uppercase;letter-spacing:.05em;
   color:var(--apagado);margin:14px 0 6px}
+
+/* --------------------------- gráficos pequenos --------------------------- */
+/* Um tom só por gráfico. Colorir faixa por qualidade usaria a paleta de estado
+   como categórica, e vermelho↔âmbar tem ΔE 4,6 em deuteranopia — reprovado
+   pelo validador. A faixa está escrita ao lado do número. */
+.barras-dist{display:flex;flex-direction:column;gap:6px}
+.bd{display:grid;grid-template-columns:96px 1fr 44px;align-items:center;gap:9px;
+  font-size:11.5px}
+.bd .rot{color:var(--texto-2);text-align:right;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.bd .trilho{height:11px;background:var(--cartao-2);border-radius:3px;overflow:hidden}
+.bd .trilho i{display:block;height:100%;background:var(--dado);
+  border-radius:0 3px 3px 0}
+.bd b{font-variant-numeric:tabular-nums;text-align:right;font-weight:600}
+/* Faixa em falha é reforçada por textura, não só por cor. */
+.bd.mau .trilho i{background:var(--vermelho)}
+.bd.mau b{color:var(--vermelho)}
+
+.faixa{width:100%;height:34px;display:block;margin-top:7px;overflow:visible}
+.faixa .area{fill:var(--dado);opacity:.1}
+.faixa .linha{fill:none;stroke:var(--dado);stroke-width:2;stroke-linejoin:round;
+  stroke-linecap:round;vector-effect:non-scaling-stroke}
+.faixa .linha.incerta{stroke-dasharray:3 3;opacity:.6}
+.faixa .ponta{fill:var(--dado);stroke:var(--cartao);stroke-width:2}
+.sem-faixa{font-size:10.5px;color:var(--apagado);margin-top:6px}
+
+.medidores{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;
+  padding-bottom:12px;margin-bottom:11px;border-bottom:1px solid var(--linha)}
+.medidor{display:flex;flex-direction:column;gap:3px;font-size:11px}
+.medidor .rot{color:var(--apagado)}
+.medidor .trilho{height:6px;background:var(--cartao-2);border-radius:3px;
+  overflow:hidden}
+.medidor .trilho i{display:block;height:100%;background:var(--dado);border-radius:3px}
+.medidor.atencao .trilho i{background:var(--ambar)}
+.medidor.mau .trilho i{background:var(--vermelho)}
+.medidor b{font-size:14px;font-variant-numeric:tabular-nums;font-weight:600}
+.medidor b span{font-size:10px;color:var(--texto-2);margin-left:2px;font-weight:400}
+.medidor.vazio b{color:var(--apagado)}
+
+.grade-dist{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+@media (max-width:1400px){.grade-dist{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:760px){.grade-dist{grid-template-columns:1fr}}
+.dist header h2{font-size:12.5px}
+.kpi.duvida b{color:var(--ambar)}

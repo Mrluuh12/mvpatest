@@ -1151,6 +1151,74 @@
   };
 
 
+
+  /* ------------------------- gráficos pequenos -------------------------- */
+
+  /** Barras horizontais de uma distribuição.
+   *
+   *  Um tom só, de propósito: colorir cada faixa por qualidade seria usar a
+   *  paleta de estado como paleta categórica, e vermelho e âmbar têm ΔE 4,6 em
+   *  deuteranopia — indistinguíveis. A faixa já está escrita ao lado do valor;
+   *  a cor não precisa carregar essa informação sozinha. */
+  function barras(dados, opcoes = {}) {
+    if (!dados.length) return `<p class="nada">sem dados</p>`;
+    const max = Math.max(...dados.map((d) => d.quantos)) || 1;
+    const total = dados.reduce((a, d) => a + d.quantos, 0);
+    const destaque = opcoes.destaque || (() => false);
+    return `<div class="barras-dist">${dados.map((d) => {
+      const pct = (100 * d.quantos) / max;
+      return `<div class="bd ${destaque(d) ? "mau" : ""}"
+        title="${esc(d.faixa)}: ${d.quantos}${
+          total ? ` (${((100 * d.quantos) / total).toFixed(1)}%)` : ""}">
+        <span class="rot">${esc(d.faixa)}</span>
+        <span class="trilho"><i style="width:${Math.max(pct, 1.2).toFixed(1)}%"></i></span>
+        <b>${d.quantos.toLocaleString("pt-BR")}</b></div>`;
+    }).join("")}</div>`;
+  }
+
+  /** Linha pequena, sem eixo. A cauda incerta sai tracejada porque a curva vem
+   *  das transições e o estado de agora pode estar sob suspeita de isolamento
+   *  do coletor — desenhar isso como fato seria afirmar o que não se sabe. */
+  function faixaDeLinha(pontos, { cauda = false, alt = 46 } = {}) {
+    if (!pontos || pontos.length < 2) return `<div class="sem-faixa">sem histórico</div>`;
+    const L = 300, T = 4, A = alt - 8;
+    const vs = pontos.map((p) => p[1]);
+    const lo = Math.min(...vs), hi = Math.max(...vs);
+    const px = (i) => (i / (pontos.length - 1)) * L;
+    //: Série constante não tem vão. Sem este caso ela era desenhada colada na
+    //: borda de baixo, o que se lê como "despencou" — o contrário do que diz.
+    const py = hi === lo ? () => T + A / 2 : (v) => T + A - ((v - lo) / (hi - lo)) * A;
+    const d = pontos.map((p, i) => `${i ? "L" : "M"}${px(i).toFixed(1)} ${py(p[1]).toFixed(1)}`).join(" ");
+    const corte = Math.max(0, pontos.length - 1 - Math.round(pontos.length * 0.12));
+    const firme = pontos.slice(0, corte + 1)
+      .map((p, i) => `${i ? "L" : "M"}${px(i).toFixed(1)} ${py(p[1]).toFixed(1)}`).join(" ");
+    const fim = pontos.slice(corte)
+      .map((p, i) => `${i ? "L" : "M"}${px(corte + i).toFixed(1)} ${py(p[1]).toFixed(1)}`).join(" ");
+    return `<svg class="faixa" viewBox="0 0 ${L} ${alt}" preserveAspectRatio="none"
+        role="img" aria-label="variação no período">
+      <path class="area" d="${d} L${L} ${alt} L0 ${alt} Z"/>
+      <path class="linha" d="${cauda ? firme : d}"/>
+      ${cauda ? `<path class="linha incerta" d="${fim}"/>` : ""}
+      <circle class="ponta" cx="${L}" cy="${py(vs[vs.length - 1]).toFixed(1)}" r="3.5"/>
+    </svg>`;
+  }
+
+  /** Medidor com limiar. A cor é reforço; o número e o rótulo estão sempre
+   *  escritos, porque cor sozinha não é canal de identidade. */
+  function medidor(rotulo, valor, unidade, { max = 100, aviso, critico } = {}) {
+    if (valor === null || valor === undefined) {
+      return `<div class="medidor vazio"><span class="rot">${esc(rotulo)}</span>
+        <b>—</b></div>`;
+    }
+    const pct = Math.max(0, Math.min(100, (valor / max) * 100));
+    const cls = critico !== undefined && valor >= critico ? "mau"
+      : aviso !== undefined && valor >= aviso ? "atencao" : "ok";
+    return `<div class="medidor ${cls}"><span class="rot">${esc(rotulo)}</span>
+      <span class="trilho"><i style="width:${pct.toFixed(1)}%"></i></span>
+      <b>${valor.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}${
+        unidade ? `<span>${esc(unidade)}</span>` : ""}</b></div>`;
+  }
+
   /* ------------------------------- rede -------------------------------- */
 
   //: Faixas de RSSI iguais às do servidor. Duplicar aqui seria a mesma cópia
@@ -1255,15 +1323,26 @@
         >${visiveis.length} de ${d.enlaces.length} enlaces</text></svg>`;
   }
 
-  const cxKpi = (rot, val, sub, cls) => `<div class="kpi ${cls || ""}">
+  const cxKpi = (rot, val, sub, cls, extra) => `<div class="kpi ${cls || ""}">
     <span class="rot">${esc(rot)}</span><b>${esc(val)}</b>
-    ${sub ? `<span class="sub">${esc(sub)}</span>` : ""}</div>`;
+    ${sub ? `<span class="sub">${esc(sub)}</span>` : ""}
+    ${extra || ""}</div>`;
 
-  function kpisDaRede(r) {
-    const pct = (a, b) => (b ? `${((100 * a) / b).toFixed(1)}%` : "—");
+  function kpisDaRede(r, no_ar) {
+    //: "1 no ar de 149" afirma demais quando 143 estão incertos. O indicador
+    //: mostra o que foi confirmado e diz quantos ficaram sem resposta segura.
+    const confirmados = r.radios_total - r.radios_incertos - r.radios_sem_estado;
+    const plural = (n, um, muitos) => `${n} ${n === 1 ? um : muitos}`;
+    const sub_ar = r.radios_incertos
+      ? `${plural(r.radios_incertos, "incerto", "incertos")}, `
+        + `${plural(confirmados, "confirmado", "confirmados")}`
+      : `${((100 * r.radios_online) / (r.radios_total || 1)).toFixed(1)}%`;
     return `<div class="kpis">
-      ${cxKpi("Rádios no ar", `${r.radios_online} / ${r.radios_total}`,
-              pct(r.radios_online, r.radios_total))}
+      ${cxKpi("Rádios no ar", `${r.radios_online} / ${r.radios_total}`, sub_ar,
+              r.radios_incertos ? "duvida" : "",
+              no_ar && no_ar.pontos.length
+                ? faixaDeLinha(no_ar.pontos, { cauda: no_ar.cauda_incerta, alt: 34 })
+                : "")}
       ${cxKpi("Enlaces abertos", r.enlaces_abertos,
               `${r.enlaces_medidos} com medida`)}
       ${cxKpi("Sinal mediano", r.rssi_mediano_dbm !== null
@@ -1275,6 +1354,29 @@
               `${r.vizinhos_min}–${r.vizinhos_max}`)}
       ${cxKpi("Enlaces ruins", r.enlaces_ruins,
               "abaixo de −85 dBm", r.enlaces_ruins ? "alerta" : "")}
+    </div>`;
+  }
+
+  /** A faixa de distribuições. É o que a mediana esconde: −61 dBm pode ser uma
+   *  malha uniforme ou metade excelente com metade péssima. */
+  function painelPanorama(pa) {
+    if (!pa) return "";
+    const bloco = (titulo, sub, corpo) => `<section class="cx dist">
+      <header><h2>${esc(titulo)}</h2></header>
+      <div class="conteudo">${corpo}
+        ${sub ? `<p class="nota-rede">${esc(sub)}</p>` : ""}</div></section>`;
+
+    const soUm = (pa.vizinhanca.find((v) => v.faixa === "1 vizinho") || {}).quantos || 0;
+    return `<div class="grade-dist">
+      ${bloco("Sinal dos enlaces", "faixas em dBm; o pior sentido de cada enlace",
+        barras(pa.sinal, { destaque: (d) => d.faixa.startsWith("abaixo") }))}
+      ${bloco("Vizinhos por rádio",
+        soUm ? `${soUm} rádios com um vizinho só — sem caminho alternativo` : "",
+        barras(pa.vizinhanca, { destaque: (d) => d.faixa === "1 vizinho" }))}
+      ${bloco("Saltos até a infraestrutura",
+        pa.salto_maximo !== null ? `profundidade máxima: ${pa.salto_maximo} saltos` : "",
+        barras(pa.profundidade, { destaque: (d) => d.faixa === "sem caminho" }))}
+      ${bloco("Enlaces por classe", "", barras(pa.classes))}
     </div>`;
   }
 
@@ -1371,38 +1473,44 @@
     const meus = (S.rede.enlaces || []).filter((l) => l.a === chave || l.b === chave);
     const linha = (rot, v, un) => `<dt>${esc(rot)}</dt><dd>${
       v === null || v === undefined ? "—" : `${v}${un ? ` ${un}` : ""}`}</dd>`;
+    const TIPO = { fixo: "infraestrutura fixa", semifixo: "estação móvel",
+                   movel: "embarcado em veículo" };
     const viz = meus.slice(0, 12).map((l) => {
       const outro = l.a === chave ? l.nome_b : l.nome_a;
-      return `<tr><td>${esc(outro)}</td>
+      return `<tr class="q-${l.cor}"><td>${esc(outro)}</td>
         <td class="mono num">${l.rssi_pior_dbm ?? "—"}</td>
-        <td class="mono num">${l.capacidade_mbps ?? "—"}</td>
-        <td><span class="selo liso ${l.cor === "ok" ? "verde"
-          : l.cor === "atencao" ? "ambar" : "vermelho"}">${esc(l.qualidade)}</span></td>
-      </tr>`;
+        <td class="mono num">${l.capacidade_mbps ?? "—"}</td></tr>`;
     }).join("");
+    const medidores = `<div class="medidores">
+      ${medidor("CPU", r.cpu_pct, "%", { aviso: 70, critico: 90 })}
+      ${medidor("Bateria", r.bateria_pct, "%")}
+      ${medidor("Temperatura", r.temperatura_c, "°C", { max: 90, aviso: 60, critico: 75 })}
+      ${medidor("Vizinhos", r.vizinhos, "", { max: 12 })}
+    </div>`;
     return `<aside class="cx painel-radio">
       <header><h2>${esc(r.nome)}</h2>
-        <button class="bt" data-fechar-radio>Fechar</button></header>
+        <span class="dir"><button class="bt pequeno" data-ir-disp="${esc(chave)}"
+          >Abrir ficha</button>
+        <button class="bt pequeno" data-fechar-radio>Fechar</button></span></header>
       <div class="conteudo">
+        ${medidores}
         <dl class="pares">
           ${linha("Ativo", r.ativo || "—")}${linha("Frota", r.frota)}
-          ${linha("Tipo", r.classe)}${linha("Endereço", r.ip || "—")}
-          ${linha("Vizinhos", r.vizinhos)}
+          ${linha("Tipo", TIPO[r.classe] || r.classe)}
+          ${linha("Endereço", r.ip || "—")}
           ${linha("Declarados pelo rádio", r.vizinhos_declarados)}
           ${linha("Pior sinal", r.pior_rssi_dbm, "dBm")}
           ${linha("Melhor sinal", r.melhor_rssi_dbm, "dBm")}
           ${linha("Ruído", r.ruido_dbm, "dBm")}
           ${linha("Potência TX", r.potencia_tx_dbm, "dBm")}
           ${linha("Clientes", r.clientes)}
-          ${linha("Temperatura", r.temperatura_c, "°C")}
-          ${linha("CPU", r.cpu_pct, "%")}${linha("Bateria", r.bateria_pct, "%")}
           ${linha("Velocidade", r.velocidade_kmh, "km/h")}
           ${linha("Altitude", r.altitude_m, "m")}
           ${linha("Resposta", r.resposta_ms, "ms")}
         </dl>
         <h3 class="sub-titulo">Vizinhança</h3>
-        <div class="rol"><table><thead><tr><th>Vizinho</th>
-          <th class="num">Sinal</th><th class="num">Mbps</th><th>Estado</th>
+        <div class="rol"><table class="viz"><thead><tr><th>Vizinho</th>
+          <th class="num">dBm</th><th class="num">Mbps</th>
         </tr></thead><tbody>${viz}</tbody></table></div>
         ${meus.length > 12
           ? `<p class="nota-rede">${meus.length - 12} vizinhos além dos mostrados.</p>`
@@ -1415,15 +1523,16 @@
       $("centro").innerHTML = `<div class="grade g1"><section class="cx">
         <div class="conteudo"><p class="nada">carregando a rede…</p></div>
       </section></div>`;
-      const [resumo, enlaces, radios, mapa] = await Promise.all([
+      const [resumo, enlaces, radios, mapa, panorama] = await Promise.all([
         api("/api/v1/rede/resumo").catch(() => null),
         api("/api/v1/rede/enlaces").catch(() => []),
         api("/api/v1/rede/radios").catch(() => []),
         api("/api/v1/rede/mapa").catch(() => ({ nos: [], enlaces: [] })),
+        api("/api/v1/rede/panorama?janela=24h").catch(() => null),
       ]);
-      S.rede = { resumo, enlaces, radios, mapa };
+      S.rede = { resumo, enlaces, radios, mapa, panorama };
     }
-    const { resumo, enlaces, radios, mapa } = S.rede;
+    const { resumo, enlaces, radios, mapa, panorama } = S.rede;
     if (!resumo) {
       return ($("centro").innerHTML =
         `<p class="nada">a seção de rede precisa do banco</p>`);
@@ -1481,13 +1590,14 @@
 
     $("centro").innerHTML = `<div class="rede ${S.redeSel ? "com-painel" : ""}">
       <div class="col-rede">
-        ${kpisDaRede(resumo)}
+        ${kpisDaRede(resumo, panorama && panorama.no_ar)}
         <section class="cx">
           <header><h2>Malha</h2><span class="dir">${abas}</span></header>
           <div class="conteudo ${aba === "mapa" ? "" : "rente"}">${corpo}</div>
           ${notas.length ? `<div class="notas-rede">${
             notas.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : ""}
         </section>
+        ${aba === "mapa" ? painelPanorama(panorama) : ""}
       </div>
       ${S.redeSel ? painelRadio(S.redeSel) : ""}</div>`;
   }
@@ -1832,6 +1942,15 @@
     if (rf) { S.redeFiltro = rf.dataset.redeFiltro; await pintarRede(); return; }
     const rr = e.target.closest("[data-radio]");
     if (rr) { S.redeSel = rr.dataset.radio; await pintarRede(); return; }
+    const ird = e.target.closest("[data-ir-disp]");
+    if (ird) {
+      // A ficha do dispositivo já tem gráfico, eventos e as sondas de
+      // diagnóstico. Duplicar isso aqui seria manter dois lugares.
+      S.dispSel = ird.dataset.irDisp; S.aba = "ativo"; S.diagResultado = null;
+      const d = (S.rede.radios || []).find((x) => x.chave === S.dispSel);
+      if (d && d.ativo) S.sel = d.ativo;
+      marcarAba(); await atualizar(); return;
+    }
     if (e.target.closest("[data-fechar-radio]")) {
       S.redeSel = null; await pintarRede(); return;
     }

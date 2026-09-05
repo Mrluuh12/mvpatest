@@ -289,7 +289,20 @@ Aba **Rede**. Quatro vistas sobre a malha: **Mapa**, **Enlaces**, **Rádios** e
    sinal cai com distância. Perto de zero significa que o pareamento de
    identidade está juntando rádios errados, ou que a origem do GPS não é real.
 
-### 8.2 Enlaces e ponto a ponto
+### 8.2 As distribuições abaixo do mapa
+
+Quatro gráficos: sinal dos enlaces, vizinhos por rádio, saltos até a
+infraestrutura e enlaces por classe. Dois números para olhar primeiro:
+
+- **quantos rádios têm um vizinho só** — vizinho único é caminho único
+- **quantos ficaram "sem caminho"** até um rádio fixo
+
+E no primeiro indicador, a curva de rádios no ar das últimas 24 h. Se ela
+discordar do número ao lado, confira se há rádios em estado *incerto*: a
+plataforma não grava transição de queda quando a coleta falha inteira, e a
+cauda tracejada é justamente isso.
+
+### 8.3 Enlaces e ponto a ponto
 
 A tabela de enlaces traz **SNR ida** e **SNR volta** em colunas separadas, e a
 diferença entre elas em **Δ dB**. Seis ou mais costuma ser antena desalinhada.
@@ -297,7 +310,7 @@ diferença entre elas em **Δ dB**. Seis ou mais costuma ser antena desalinhada.
 Em **Ponto a ponto** ficam só os enlaces entre infraestrutura fixa — a espinha
 dorsal. Um cartão por enlace, com os dois sentidos abertos.
 
-### 8.3 Os dois números do rodapé que importam
+### 8.4 Os dois números do rodapé que importam
 
 | Rodapé | O que quer dizer |
 |---|---|

@@ -771,6 +771,40 @@ com os dois sentidos abertos. Se um destes cai, um pedaço da mina perde rede,
 não um caminhão. A classe sai do cadastro: estação base e gate station são
 fixas, estação móvel é torre sobre carreta, o resto anda.
 
+### As distribuições, que a mediana esconde
+
+Um sinal mediano de −61 dBm pode ser uma malha uniforme ou metade excelente com
+metade péssima. São situações muito diferentes e a mesma mediana. Abaixo do
+mapa há quatro distribuições:
+
+**Sinal dos enlaces** por faixa de dBm · **Vizinhos por rádio**, com a faixa de
+*um vizinho só* separada porque vizinho único é caminho único · **Saltos até a
+infraestrutura**, calculado por busca em largura a partir dos rádios fixos —
+cada salto acrescenta latência e mais um equipamento que, se cair, leva junto
+tudo que vem depois · **Enlaces por classe**.
+
+Todas com **um tom só**. Colorir cada faixa por qualidade seria usar a paleta de
+estado como paleta categórica, e vermelho e âmbar têm ΔE 4,6 em deuteranopia —
+o `scripts/validate_palette.js` reprova. A faixa está escrita ao lado do
+número; a cor não precisa carregar essa informação sozinha. A cor de marca de
+dado tem token próprio (`--dado`), validado nos seis testes contra os dois
+fundos: o azul de interface do modo escuro é claro demais para barra e linha.
+
+### A curva de rádios no ar, e por que ela discorda do indicador
+
+O primeiro indicador traz uma faixa de linha das últimas 24 h, reconstruída das
+**transições** — não amostrada. Ela pode discordar do número ao lado, e a
+discordância é a regra funcionando: quando a coleta falha inteira, a plataforma
+marca o estado como **incerto** e **não** grava transição de queda, porque
+falha total é indício de coletor isolado, não de mina parada. A transição
+continua dizendo *"estava no ar"*; o estado corrente diz *"não responde, e
+desconfio de mim"*. Por isso a cauda da curva sai tracejada e o indicador
+mostra quantos estão confirmados contra quantos estão incertos, em vez de um
+"1 de 149" que afirmaria demais.
+
+Série constante é desenhada no meio da faixa, não colada na borda de baixo —
+ali ela se lê como "despencou", que é o contrário do que diz.
+
 ### Posição tem prazo de validade
 
 Um caminhão a 30 km/h anda 5 km em dez minutos. Desenhá-lo onde ele estava há

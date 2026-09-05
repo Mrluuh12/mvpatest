@@ -462,6 +462,30 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         async with fonte._engine.connect() as conexao:
             return jsonable_encoder(await rede.radios(conexao))
 
+    @app.get("/api/v1/rede/panorama", tags=["rede"])
+    async def rede_panorama(janela: str = "24h") -> dict:
+        """As distribuições que a mediana esconde, mais a curva de rádios no ar.
+
+        Um sinal mediano de −61 dBm pode ser uma malha uniforme ou metade
+        excelente com metade péssima.
+        """
+        from . import rede, series
+
+        if fonte._engine is None:
+            raise HTTPException(status_code=503, detail="sem banco configurado")
+        try:
+            segundos = series.segundos_da_janela(janela)
+        except series.JanelaInvalida as erro:
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+        ate = datetime.now(UTC)
+        async with fonte._engine.connect() as conexao:
+            dados = await rede.panorama(conexao)
+            dados["no_ar"] = await rede.serie_no_ar(
+                conexao, ate - timedelta(seconds=segundos), ate
+            )
+        dados["janela"] = janela
+        return jsonable_encoder(dados)
+
     @app.get("/api/v1/rede/mapa", tags=["rede"])
     async def rede_mapa() -> dict:
         """Rádios em coordenada de terreno, com os enlaces entre eles."""

@@ -22,15 +22,24 @@ Três coisas moram aqui e em nenhum outro lugar:
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from plataforma.db.esquema import aresta, ativo, dispositivo, estado, identificador, leitura
+from plataforma.db.coleta import estado_no_inicio
+from plataforma.db.esquema import (
+    aresta,
+    ativo,
+    dispositivo,
+    estado,
+    identificador,
+    leitura,
+    transicao,
+)
 from plataforma.db.grafo import sujeito_do_enlace
 
 #: Frotas cujos rádios não andam: estação base e a guarita de acesso. A
@@ -438,6 +447,197 @@ async def resumo(conexao: AsyncConnection) -> dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------- panorama
+
+
+def _histograma(
+    valores: list[float], cortes: tuple[float, ...], rotulos: tuple[str, ...]
+) -> list[dict]:
+    """Contagem por faixa. ``cortes`` são os limites superiores, em ordem."""
+    contas = [0] * len(rotulos)
+    for v in valores:
+        for i, corte in enumerate(cortes):
+            if v <= corte:
+                contas[i] += 1
+                break
+        else:
+            contas[-1] += 1
+    return [{"faixa": r, "quantos": c} for r, c in zip(rotulos, contas, strict=True)]
+
+
+def saltos_ate_a_infraestrutura(
+    radios_por_chave: dict[str, str], pares: list[tuple[str, str]]
+) -> dict[str, int | None]:
+    """Distância em saltos de cada rádio até o rádio fixo mais próximo.
+
+    Busca em largura a partir de todos os fixos ao mesmo tempo. É o número que
+    diz se a malha tem profundidade demais: cada salto acrescenta latência e
+    mais um equipamento que, se cair, leva junto tudo que vem depois dele.
+
+    ``None`` para quem não alcança nenhum fixo pelos enlaces observados — que
+    não é o mesmo que estar sem rede, porque a vizinhança observada é sempre
+    parcial.
+    """
+    vizinhos: dict[str, set[str]] = defaultdict(set)
+    for a, b in pares:
+        vizinhos[a].add(b)
+        vizinhos[b].add(a)
+
+    distancia: dict[str, int | None] = dict.fromkeys(radios_por_chave)
+    fila = deque()
+    for chave, classe in radios_por_chave.items():
+        if classe == "fixo":
+            distancia[chave] = 0
+            fila.append(chave)
+
+    while fila:
+        atual = fila.popleft()
+        for viz in vizinhos.get(atual, ()):
+            if viz in distancia and distancia[viz] is None:
+                distancia[viz] = distancia[atual] + 1
+                fila.append(viz)
+    return distancia
+
+
+async def panorama(conexao: AsyncConnection) -> dict[str, Any]:
+    """As distribuições que o número mediano esconde.
+
+    Um sinal mediano de −61 dBm pode ser uma malha uniforme ou metade excelente
+    com metade péssima. São situações muito diferentes e a mesma mediana.
+    """
+    todos = await radios(conexao)
+    ligacoes = await enlaces(conexao)
+
+    rssis = [e["rssi_pior_dbm"] for e in ligacoes if e["rssi_pior_dbm"] is not None]
+    sinal = _histograma(
+        rssis,
+        (-95.0, -85.0, -75.0, -65.0),
+        ("abaixo de −95", "−95 a −85", "−85 a −75", "−75 a −65", "acima de −65"),
+    )
+
+    # Agrupado em faixas: uma linha por contagem exata dava quinze linhas e a
+    # forma da distribuição se perdia no comprimento da lista. O corte em 1 é o
+    # que importa — vizinho único é caminho único.
+    vizinhanca = _histograma(
+        [float(r["vizinhos"]) for r in todos],
+        (1.0, 3.0, 6.0, 9.0, 12.0),
+        ("1 vizinho", "2 a 3", "4 a 6", "7 a 9", "10 a 12", "13 ou mais"),
+    )
+
+    por_classe: dict[str, int] = defaultdict(int)
+    for e in ligacoes:
+        por_classe[e["classe"]] += 1
+    classes = [
+        {"faixa": nome, "quantos": por_classe.get(chave, 0)}
+        for chave, nome in (
+            ("espinha", "espinha dorsal"),
+            ("distribuicao", "distribuição"),
+            ("lavra", "frente de lavra"),
+        )
+    ]
+
+    classe_de = {r["chave"]: r["classe"] for r in todos}
+    saltos = saltos_ate_a_infraestrutura(
+        classe_de, [(e["a"], e["b"]) for e in ligacoes]
+    )
+    conta_saltos: dict[str, int] = defaultdict(int)
+    for d in saltos.values():
+        conta_saltos["sem caminho" if d is None else str(d)] += 1
+    ordem = sorted(
+        conta_saltos, key=lambda k: (k == "sem caminho", int(k) if k.isdigit() else 0)
+    )
+    profundidade = [{"faixa": k, "quantos": conta_saltos[k]} for k in ordem]
+
+    return {
+        "sinal": sinal,
+        "vizinhanca": vizinhanca,
+        "classes": classes,
+        "profundidade": profundidade,
+        "sem_caminho": conta_saltos.get("sem caminho", 0),
+        "salto_maximo": max(
+            (d for d in saltos.values() if d is not None), default=None
+        ),
+    }
+
+
+async def serie_no_ar(
+    conexao: AsyncConnection, desde: datetime, ate: datetime, pontos: int = 60
+) -> dict[str, Any]:
+    """Quantos rádios estavam no ar ao longo do período.
+
+    Sai das **transições**, não de amostras: a tabela guarda o instante exato de
+    cada mudança, então a curva é reconstruída e não estimada. Amostrar de dez
+    em dez minutos perderia uma queda de dois minutos registrada com precisão de
+    segundo.
+
+    A curva pode discordar do indicador de agora, e a discordância é a regra
+    funcionando. Quando a coleta falha inteira, a plataforma marca o estado como
+    **incerto** e **não** grava transição de queda — falha total é indício de
+    coletor isolado, não de mina parada. A transição continua dizendo "estava no
+    ar"; o estado corrente diz "não responde, e desconfio de mim". Por isso a
+    cauda da série é devolvida marcada em vez de ser desenhada como fato.
+    """
+    chaves = {r["chave"] for r in await radios(conexao)}
+    if not chaves:
+        return {"pontos": [], "incertos_agora": 0, "cauda_incerta": False}
+
+    mudancas = (
+        await conexao.execute(
+            select(transicao.c.sujeito, transicao.c.de, transicao.c.para, transicao.c.em)
+            .where(transicao.c.sujeito.in_(chaves))
+            .order_by(transicao.c.em)
+        )
+    ).all()
+    correntes = {
+        ln.sujeito: ln.alcancavel
+        for ln in (
+            await conexao.execute(
+                select(estado.c.sujeito, estado.c.alcancavel).where(
+                    estado.c.sujeito.in_(chaves)
+                )
+            )
+        ).all()
+    }
+
+    por_sujeito: dict[str, list] = defaultdict(list)
+    for m in mudancas:
+        por_sujeito[m.sujeito].append(m)
+
+    vivo = {
+        c: estado_no_inicio(por_sujeito.get(c, []), desde, correntes.get(c, False))
+        for c in chaves
+    }
+    no_ar = sum(1 for v in vivo.values() if v)
+
+    passo = (ate - desde).total_seconds() / max(1, pontos)
+    dentro = [m for m in mudancas if desde < m.em <= ate]
+    serie: list[list[float]] = []
+    i = 0
+    for k in range(pontos + 1):
+        instante = desde + timedelta(seconds=passo * k)
+        while i < len(dentro) and dentro[i].em <= instante:
+            m = dentro[i]
+            if vivo.get(m.sujeito) != m.para:
+                no_ar += 1 if m.para else -1
+                vivo[m.sujeito] = m.para
+            i += 1
+        serie.append([instante.timestamp(), float(no_ar)])
+
+    incertos = (
+        await conexao.execute(
+            select(func.count())
+            .select_from(estado)
+            .where(estado.c.sujeito.in_(chaves))
+            .where(estado.c.qualidade == "incerta")
+        )
+    ).scalar_one()
+    return {
+        "pontos": serie,
+        "incertos_agora": int(incertos),
+        "cauda_incerta": int(incertos) > 0,
+    }
+
+
 # ------------------------------------------------------------------ auxiliares
 
 
@@ -491,6 +691,9 @@ def _distancia(a: Radio | None, b: Radio | None) -> float | None:
 
 __all__ = [
     "ASSIMETRIA_SUSPEITA_DB",
+    "panorama",
+    "saltos_ate_a_infraestrutura",
+    "serie_no_ar",
     "POSICAO_VENCE_S",
     "FAIXAS_RSSI",
     "classe_da_frota",

@@ -211,3 +211,106 @@ class TestResumo:
         r = await rede.resumo(conexao)
         assert r["radios_total"] == 0
         assert r["rssi_mediano_dbm"] is None, "mediana de nada é ausência, não zero"
+
+
+class TestPanorama:
+    """A mediana esconde a forma. −61 dBm pode ser malha uniforme ou metade
+    excelente com metade péssima."""
+
+    async def test_o_sinal_vira_faixas(self, conexao) -> None:
+        await _radio(conexao, "a", "ERB-01", "ERB")
+        await _radio(conexao, "b", "ERB-02", "ERB")
+        await _radio(conexao, "c", "CA-1", "CA")
+        await _meia(conexao, "a", "b", rf_rssi_dbm=-55.0)
+        await _meia(conexao, "a", "c", rf_rssi_dbm=-99.0)
+
+        pa = await rede.panorama(conexao)
+        por_faixa = {x["faixa"]: x["quantos"] for x in pa["sinal"]}
+        assert por_faixa["acima de −65"] == 1
+        assert por_faixa["abaixo de −95"] == 1
+
+    async def test_vizinho_unico_e_faixa_propria(self, conexao) -> None:
+        """Vizinho único é caminho único: se aquele enlace cai, o rádio some.
+        A faixa existe separada porque é a que se olha primeiro."""
+        await _radio(conexao, "a", "ERB-01", "ERB")
+        await _radio(conexao, "b", "CA-1", "CA")
+        await _meia(conexao, "a", "b", rf_rssi_dbm=-60.0)
+
+        pa = await rede.panorama(conexao)
+        por_faixa = {x["faixa"]: x["quantos"] for x in pa["vizinhanca"]}
+        assert por_faixa["1 vizinho"] == 2, "os dois têm exatamente um vizinho"
+
+
+class TestSaltos:
+    """Cada salto acrescenta latência e mais um equipamento que, se cair, leva
+    junto tudo que vem depois dele."""
+
+    async def test_conta_saltos_ate_o_fixo_mais_proximo(self) -> None:
+        classes = {"erb": "fixo", "m1": "movel", "m2": "movel", "m3": "movel"}
+        pares = [("erb", "m1"), ("m1", "m2"), ("m2", "m3")]
+        d = rede.saltos_ate_a_infraestrutura(classes, pares)
+        assert d == {"erb": 0, "m1": 1, "m2": 2, "m3": 3}
+
+    async def test_pega_o_caminho_mais_curto_entre_varios_fixos(self) -> None:
+        classes = {"a": "fixo", "b": "fixo", "m": "movel"}
+        d = rede.saltos_ate_a_infraestrutura(classes, [("a", "m"), ("m", "b")])
+        assert d["m"] == 1
+
+    async def test_sem_caminho_e_none_e_nao_infinito(self) -> None:
+        """`None` diz "não alcança pelos enlaces observados", que não é o mesmo
+        que estar sem rede: a vizinhança observada é sempre parcial."""
+        classes = {"erb": "fixo", "solto": "movel"}
+        d = rede.saltos_ate_a_infraestrutura(classes, [])
+        assert d["solto"] is None
+
+    async def test_malha_sem_nenhum_fixo_nao_alcanca_ninguem(self) -> None:
+        classes = {"m1": "movel", "m2": "movel"}
+        d = rede.saltos_ate_a_infraestrutura(classes, [("m1", "m2")])
+        assert set(d.values()) == {None}
+
+
+class TestSerieNoAr:
+    async def test_a_curva_sai_das_transicoes(self, conexao) -> None:
+        """Reconstruída, não amostrada: a tabela guarda o instante exato de cada
+        mudança."""
+        from sqlalchemy import insert
+
+        from plataforma.db.esquema import transicao
+
+        await _radio(conexao, "a", "ERB-01", "ERB")
+        await _radio(conexao, "b", "ERB-02", "ERB")
+        caiu = AGORA - timedelta(hours=1)
+        await conexao.execute(
+            insert(transicao).values(sujeito="a", de=True, para=False, em=caiu)
+        )
+        await conexao.commit()
+
+        s = await rede.serie_no_ar(conexao, AGORA - timedelta(hours=2), AGORA, pontos=20)
+        valores = [p[1] for p in s["pontos"]]
+        assert valores[0] == 2.0, "os dois estavam no ar no início"
+        assert valores[-1] == 1.0, "um caiu no meio do período"
+
+    async def test_a_cauda_e_marcada_quando_o_estado_e_incerto(self, conexao) -> None:
+        """Falha total de coleta marca estado incerto e **não** grava transição
+        de queda. A curva continua dizendo "estava no ar" e o agora diz "não
+        responde, e desconfio de mim" — a cauda sai marcada em vez de virar
+        fato."""
+        from sqlalchemy import update
+
+        from plataforma.db.esquema import estado
+
+        await _radio(conexao, "a", "ERB-01", "ERB")
+        await conexao.execute(
+            update(estado).where(estado.c.sujeito == "a").values(
+                alcancavel=False, qualidade="incerta"
+            )
+        )
+        await conexao.commit()
+
+        s = await rede.serie_no_ar(conexao, AGORA - timedelta(hours=1), AGORA)
+        assert s["cauda_incerta"] is True
+        assert s["incertos_agora"] == 1
+
+    async def test_sem_radio_devolve_curva_vazia_e_nao_estoura(self, conexao) -> None:
+        s = await rede.serie_no_ar(conexao, AGORA - timedelta(hours=1), AGORA)
+        assert s["pontos"] == []
