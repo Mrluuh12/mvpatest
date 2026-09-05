@@ -383,6 +383,30 @@ justamente o enlace prestes a cair. Cada observação agregada carrega o rótulo
 `agregacao`, e a ficha o exibe em português — *pior entre os vizinhos* — porque
 `rf_snr_db` num PtP é o enlace e aqui é o pior de N.
 
+### O enlace é objeto monitorável, não só relação
+
+Um rádio de malha não tem "o SNR": tem um por vizinho. A ficha do aparelho
+mostra o pior num número só, o que responde *"este rádio está bem?"*. Mas
+*"qual enlace é o pior?"* só tem resposta se cada meia-aresta guardar a própria
+medida — e é essa a pergunta que leva alguém à torre certa.
+
+Cada enlace vira sujeito com chave própria, e ela é **direcional**:
+
+```
+enlace:CA-1001-RADIO RJT>02:D0:12:0E:F8:85
+```
+
+O SNR que A mede do enlace com B não é o que B mede do mesmo enlace: antenas,
+alturas e ruído local diferem. Guardar os dois sob a mesma chave apagaria
+metade do diagnóstico — e é justamente a assimetria que diz **de que lado** o
+problema está. O `>` deixa a direção visível na própria chave.
+
+Contra o parque real: **554 enlaces medidos, 2.216 medidas**, e a pergunta
+*"quais são os cinco piores enlaces da malha?"* passou a ter resposta.
+
+Publicar o agregado **e** o detalhe não é redundância: a ficha do rádio quer o
+pior num número só; o diagnóstico quer saber qual.
+
 ### A junção recusa chave ambígua
 
 O IP é a chave, confirmado com quem opera: o endereço que o exportador publica

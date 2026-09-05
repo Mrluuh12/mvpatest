@@ -488,3 +488,6 @@ td.num{text-align:right}
   padding:6px 8px;font:inherit;font-size:12px;background:var(--cartao);color:var(--texto)}
 .opcao select:focus,.opcao input:focus{outline:none;border-color:var(--azul)}
 .opcao .nota{font-style:normal;font-size:10.5px;color:var(--apagado);line-height:1.4}
+/* Enlace abaixo de 10 dB de SNR: é o que cai primeiro. A cor é reforço — a
+   coluna com o número é o sinal primário. */
+tr.enlace-ruim td:nth-child(2){color:var(--vermelho);font-weight:600}

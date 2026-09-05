@@ -792,19 +792,35 @@
   function cxVizinhos(c) {
     const tipos = c.opcoes?.tipos || ENLACES_DE_REDE;
     const vs = (S.vizinhos || []).filter((v) => tipos.includes(v.tipo));
-    const linhas = vs.map((v) => `<tr class="clicavel" data-disp="${esc(v.destino)}">
+    // O enlace mede o que mede, e é assimétrico: o SNR daqui não é o de lá.
+    // Mostrar o número do nosso lado com a direção explícita evita que alguém
+    // conclua coisa errada sobre o outro extremo.
+    const num = (v, casas, un) => v == null ? '<span class="nulo">—</span>'
+      : `${v.toFixed(casas).replace(".", ",")}${un ? " " + un : ""}`;
+    const linhas = vs.map((v) => {
+      const m = v.medidas || {};
+      const ruim = m.rf_snr_db != null && m.rf_snr_db < 10;
+      return `<tr class="clicavel ${ruim ? "enlace-ruim" : ""}" data-disp="${esc(v.destino)}">
       <td class="nome">${esc(v.nome)}</td>
-      <td><span class="selo liso neutro">${esc(v.tipo)}</span></td>
+      <td class="mono num">${num(m.rf_snr_db, 1, "dB")}</td>
+      <td class="mono num">${num(m.rf_rssi_dbm, 1, "dBm")}</td>
+      <td class="mono num">${num(m.rf_capacidade_estimada_mbps, 0, "Mbps")}</td>
       <td class="mono">${esc(hora(v.desde))}</td>
-      <td class="mono">${esc(v.atributos?.radio || "—")}</td></tr>`).join("");
+      <td class="mono">${esc(v.atributos?.radio || "—")}</td></tr>`;
+    }).join("");
     return `<section class="cx"><header><h2>${tit(c, "Vizinhança")}</h2>
       ${vs.length ? `<span class="dir">${vs.length}</span>` : ""}</header>
       <div class="conteudo rente"><div class="rol"><table>
-        <thead><tr><th>Vizinho</th><th>Enlace</th><th>Desde</th><th>Rádio</th></tr></thead>
-        <tbody>${linhas || `<tr><td colspan="4" class="nulo">
+        <thead><tr><th>Vizinho</th><th>SNR</th><th>Sinal</th><th>Taxa</th>
+          <th>Desde</th><th>Rádio</th></tr></thead>
+        <tbody>${linhas || `<tr><td colspan="6" class="nulo">
           nenhuma vizinhança observada — o módulo que a publica é o Rajant
         </td></tr>`}</tbody>
-      </table></div></div></section>`;
+      </table></div></div>
+      <div class="pe"><span class="obs-conf">Medido <b>deste lado</b> do enlace.
+        O SNR que o vizinho mede não é o mesmo: antenas, alturas e ruído local
+        diferem, e é a assimetria que diz de que lado está o problema.</span></div>
+    </section>`;
   }
 
   function cxAuditoria(c) {

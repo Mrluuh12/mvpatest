@@ -143,7 +143,7 @@ async def _conciliar_grafo(
     identificadores. Vizinho que não resolve não vira aresta — mas é contado,
     porque rádio que a malha vê e a planilha não tem é achado de inventário.
     """
-    from .grafo import conciliar, resolver_identidades
+    from .grafo import conciliar, resolver_identidades, sujeito_do_enlace
 
     if not resultado.relacoes and not resultado.relacoes_completas:
         return {}
@@ -160,7 +160,39 @@ async def _conciliar_grafo(
     # seria afirmar queda sem ter perguntado.
     lidos = {o.sujeito for o in resultado.observacoes}
 
-    total = {"nao_resolvidos": len(resolucao.desconhecidas) + len(resolucao.ambiguas)}
+    # As medidas do enlace só podem ser gravadas depois de o destino resolver:
+    # antes disso não existe meia-aresta a que pendurá-las.
+    medidas = [
+        {
+            "sujeito": sujeito_do_enlace(r.origem, resolucao.por_identidade[r.destino]),
+            "metrica": nome,
+            "valor": valor,
+            "qualidade": "boa",
+            "rotulos": {"fonte": "prometheus", "enlace": "meia_aresta"},
+            "modulo": "rajant",
+            "em": momento,
+        }
+        for r in resultado.relacoes
+        if r.destino in resolucao.por_identidade
+        for nome, valor in r.medidas.items()
+    ]
+    if medidas:
+        await conexao.execute(
+            pg_insert(leitura)
+            .values(medidas)
+            .on_conflict_do_update(
+                index_elements=["sujeito", "metrica"],
+                set_={
+                    c: text(f"excluded.{c}")
+                    for c in ("valor", "qualidade", "rotulos", "modulo", "em")
+                },
+            )
+        )
+
+    total = {
+        "nao_resolvidos": len(resolucao.desconhecidas) + len(resolucao.ambiguas),
+        "medidas_de_enlace": len(medidas),
+    }
     for tipo in {r.tipo for r in resultado.relacoes}:
         c = await conciliar(
             conexao, tipo, traduzidas, momento,

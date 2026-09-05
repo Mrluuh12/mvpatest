@@ -270,6 +270,51 @@ class TestColeta:
         assert r.observacoes == ()
         assert any("chave disputada" in x and "10.188.99.192" in x for x in r.rejeitadas)
 
+    async def test_a_relacao_carrega_as_medidas_do_enlace(self) -> None:
+        """Publicar agregado e detalhe não é redundância: a ficha do rádio
+        quer o pior num número só, e o diagnóstico quer saber *qual* enlace é
+        o pior."""
+        m = modulo({
+            "rajant_peer_ativo == 1": [
+                {"metric": {"bc": "CA-1001", "ip": "10.188.99.1",
+                            "radio": "wlan0", "peer": "10.0.0.9"},
+                 "value": [1767225600, "1"]},
+            ],
+            "rajant_peer_snr_db": [
+                {"metric": {"bc": "CA-1001", "ip": "10.188.99.1",
+                            "radio": "wlan0", "peer": "10.0.0.9"},
+                 "value": [1767225600, "7.5"]},
+            ],
+        })
+        r = await m.coletar(ALVOS)
+        (rel,) = [x for x in r.relacoes if x.destino == "10.0.0.9"]
+        assert rel.medidas["rf_snr_db"] == 7.5
+
+    async def test_o_mesmo_vizinho_por_dois_radios_fica_com_o_pior(self) -> None:
+        """Dois caminhos para o mesmo par de equipamentos são um enlace só, e
+        quem prevê queda é o lado ruim."""
+        serie_peer = lambda radio, v: {  # noqa: E731
+            "metric": {"bc": "CA-1001", "ip": "10.188.99.1",
+                       "radio": radio, "peer": "10.0.0.9"},
+            "value": [1767225600, v],
+        }
+        m = modulo({
+            "rajant_peer_ativo == 1": [serie_peer("wlan0", "1")],
+            "rajant_peer_snr_db": [serie_peer("wlan0", "31"), serie_peer("wlan1", "9")],
+        })
+        r = await m.coletar(ALVOS)
+        (rel,) = [x for x in r.relacoes if x.destino == "10.0.0.9"]
+        assert rel.medidas["rf_snr_db"] == 9.0
+
+    async def test_medida_fora_do_dicionario_nao_entra(self) -> None:
+        """A relação valida as medidas como qualquer outro canal."""
+        from inventario.modelo import TipoAresta
+        from plataforma.modulos.contrato import Relacao
+
+        with pytest.raises(Exception, match="dicionário|não está"):
+            Relacao(origem="a", destino="b", tipo=TipoAresta.PEER_MESH,
+                    medidas={"inventada_agora": 1.0})
+
     async def test_a_juncao_fica_disponivel_para_a_tela(self) -> None:
         m = modulo({"rajant_online": [serie("BC-NOVO", "10.50.0.1", 1)]})
         await m.coletar(ALVOS)

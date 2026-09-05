@@ -131,6 +131,19 @@ POR_METRICA: dict[str, Consulta] = {c.metrica: c for c in CONSULTAS}
 #: módulo (~2.700 séries), e é a que preenche o grafo temporal.
 CONSULTA_VIZINHOS = "rajant_peer_ativo == 1"
 
+#: As medidas **do enlace**, uma por vizinho. São as mesmas fontes que
+#: alimentam os cartões agregados do aparelho, mas sem o `min by` — porque o
+#: enlace é objeto monitorável por si, com histórico e estado próprios.
+#:
+#: Publicar as duas coisas não é redundância: a ficha do rádio quer o pior
+#: caso num número só, e o diagnóstico quer saber *qual* enlace é o pior.
+MEDIDAS_DE_ENLACE: dict[str, str] = {
+    "rajant_peer_snr_db": "rf_snr_db",
+    "rajant_peer_sinal_dbm": "rf_rssi_dbm",
+    "rajant_peer_taxa_mbps": "rf_capacidade_estimada_mbps",
+    "rajant_peer_custo": "malha_custo_link",
+}
+
 
 MANIFESTO = Manifesto(
     nome="rajant",
@@ -317,6 +330,8 @@ class ModuloRajant:
         parcial = casar(series, alvos)
         juncao.absorver(parcial)
 
+        medidas = await self._medidas_de_enlace(cliente)
+
         vistas: set[tuple[str, str]] = set()
         relacoes: list[Relacao] = []
         for serie in series:
@@ -337,9 +352,47 @@ class ModuloRajant:
                     destino=destino,
                     tipo=TipoAresta.PEER_MESH,
                     atributos={"radio": rotulos.get("radio", "")},
+                    medidas=medidas.get((rotulos.get("ip", ""), destino), {}),
                 )
             )
         return tuple(relacoes), True
+
+    async def _medidas_de_enlace(
+        self, cliente: httpx.AsyncClient
+    ) -> dict[tuple[str, str], dict[str, float]]:
+        """O que cada enlace mede, indexado por (ip do rádio, vizinho).
+
+        Uma consulta por métrica, sem agregação. Quando um BC vê o mesmo
+        vizinho por dois rádios, fica o **pior** valor: dois caminhos para o
+        mesmo par de equipamentos são um enlace só, e quem prevê queda é o
+        lado ruim.
+        """
+        saida: dict[tuple[str, str], dict[str, float]] = {}
+        for fonte, canonica in MEDIDAS_DE_ENLACE.items():
+            try:
+                series = await self.prometheus.instantanea(fonte, cliente)
+            except Exception:  # noqa: BLE001
+                continue
+            melhor_e_menor = canonica in MENOR_E_MELHOR
+            for serie in series:
+                r = serie.get("metric", {})
+                chave = (r.get("ip", ""), (r.get("peer") or "").strip())
+                if not chave[0] or not chave[1]:
+                    continue
+                try:
+                    valor = float(serie["value"][1])
+                except (KeyError, IndexError, TypeError, ValueError):
+                    continue
+                if valor != valor:
+                    continue
+                atual = saida.setdefault(chave, {}).get(canonica)
+                if atual is None:
+                    saida[chave][canonica] = valor
+                else:
+                    saida[chave][canonica] = (
+                        max(atual, valor) if melhor_e_menor else min(atual, valor)
+                    )
+        return saida
 
     async def coletar(self, alvos: list[dict[str, Any]]) -> ResultadoColeta:
         inicio = time.perf_counter()

@@ -45,6 +45,21 @@ from .esquema import aresta, identificador
 _PREFIXO = re.compile(r"^(mac|serie|nome):", re.I)
 
 
+def sujeito_do_enlace(origem: str, destino: str) -> str:
+    """A chave sob a qual as medidas de um enlace são guardadas.
+
+    **Direcional, e de propósito.** O SNR que A mede do enlace com B não é o
+    que B mede do mesmo enlace: antenas diferentes, alturas diferentes, ruído
+    local diferente. Guardar os dois sob a mesma chave apagaria metade do
+    diagnóstico — e é justamente a assimetria que diz de que lado está o
+    problema.
+
+    O ``>`` deixa a direção visível na própria chave, para quem lê uma linha
+    de log não precisar consultar documentação.
+    """
+    return f"enlace:{origem}>{destino}"
+
+
 def _normalizar_mac(valor: str) -> str:
     """MAC comparável: sem separador, maiúsculo.
 
@@ -206,6 +221,22 @@ async def vizinhos(
             .order_by(aresta.c.tipo, aresta.c.destino_chave)
         )
     ).all()
+    # As medidas moram na meia-aresta, não na aresta: buscar aqui evita que a
+    # tela tenha de saber montar a chave do enlace.
+    from .esquema import leitura
+
+    chaves = [sujeito_do_enlace(chave, ln.destino_chave) for ln in linhas]
+    medidas: dict[str, dict[str, float]] = {}
+    if chaves:
+        for m in (
+            await conexao.execute(
+                select(leitura.c.sujeito, leitura.c.metrica, leitura.c.valor).where(
+                    leitura.c.sujeito.in_(chaves)
+                )
+            )
+        ).all():
+            medidas.setdefault(m.sujeito, {})[m.metrica] = m.valor
+
     return [
         {
             "destino": ln.destino_chave,
@@ -213,9 +244,17 @@ async def vizinhos(
             "desde": ln.validade.lower,
             "ate": ln.validade.upper,
             "atributos": ln.atributos or {},
+            "medidas": medidas.get(sujeito_do_enlace(chave, ln.destino_chave), {}),
         }
         for ln in linhas
     ]
 
 
-__all__ = ["Conciliacao", "Resolucao", "conciliar", "resolver_identidades", "vizinhos"]
+__all__ = [
+    "Conciliacao",
+    "Resolucao",
+    "conciliar",
+    "resolver_identidades",
+    "sujeito_do_enlace",
+    "vizinhos",
+]

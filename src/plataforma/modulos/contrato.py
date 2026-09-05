@@ -82,6 +82,22 @@ class Relacao(BaseModel):
     tipo: TipoAresta
     atributos: dict[str, Any] = Field(default_factory=dict)
 
+    #: O que foi medido **no enlace**, por nome canônico. Um rádio de malha
+    #: não tem "o SNR": tem um por vizinho, e é aqui que cada um vem inteiro,
+    #: sem a agregação que a ficha do aparelho mostra.
+    #:
+    #: A plataforma resolve o destino e grava sob a meia-aresta, porque o
+    #: módulo não conhece o inventário — mesma divisão de trabalho das
+    #: relações.
+    medidas: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("medidas")
+    @classmethod
+    def _medidas_canonicas(cls, v: dict[str, float]) -> dict[str, float]:
+        for nome in v:
+            validar(nome)
+        return v
+
 
 class Manifesto(BaseModel):
     """A declaração de um módulo. É por ela que a plataforma decide se carrega."""

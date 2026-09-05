@@ -173,6 +173,65 @@ class TestIdentidade:
         assert r.ambiguas == set()
 
 
+class TestEnlaceComoSujeito:
+    """O enlace é objeto monitorável, não só relação.
+
+    Um rádio de malha não tem "o SNR": tem um por vizinho. A ficha do aparelho
+    mostra o pior num número só, o que responde *"este rádio está bem?"*. Mas
+    *"qual enlace é o pior?"* só tem resposta se cada meia-aresta guardar a
+    própria medida — e é essa a pergunta que leva alguém à torre certa.
+    """
+
+    @staticmethod
+    def test_o_sujeito_e_direcional() -> None:
+        """O SNR que A mede do enlace com B não é o que B mede do mesmo
+        enlace: antenas, alturas e ruído local diferem. Guardar os dois sob a
+        mesma chave apagaria metade do diagnóstico — e é justamente a
+        assimetria que diz de que lado está o problema."""
+        from plataforma.db.grafo import sujeito_do_enlace
+
+        assert sujeito_do_enlace("a", "b") == "enlace:a>b"
+        assert sujeito_do_enlace("a", "b") != sujeito_do_enlace("b", "a")
+
+    @pytest.mark.asyncio
+    async def test_as_medidas_voltam_junto_com_o_vizinho(self, conexao) -> None:
+        from plataforma.db.esquema import leitura
+        from plataforma.db.grafo import sujeito_do_enlace
+
+        await conciliar(conexao, MESH, (rel("a", "b"),), T0, completo=True)
+        await conexao.execute(
+            leitura.insert().values(
+                sujeito=sujeito_do_enlace("a", "b"), metrica="rf_snr_db",
+                valor=7.5, qualidade="boa", rotulos={}, modulo="rajant", em=T0,
+            )
+        )
+        (v,) = await vizinhos(conexao, "a", T0 + timedelta(minutes=1))
+        assert v["medidas"]["rf_snr_db"] == 7.5
+
+    @pytest.mark.asyncio
+    async def test_enlace_sem_medida_nao_inventa(self, conexao) -> None:
+        await conciliar(conexao, MESH, (rel("a", "b"),), T0, completo=True)
+        (v,) = await vizinhos(conexao, "a", T0 + timedelta(minutes=1))
+        assert v["medidas"] == {}
+
+    @pytest.mark.asyncio
+    async def test_a_medida_do_outro_sentido_nao_vaza(self, conexao) -> None:
+        """b>a é outro enlace. Se vazasse, o operador leria o número do
+        extremo errado e iria à torre errada."""
+        from plataforma.db.esquema import leitura
+        from plataforma.db.grafo import sujeito_do_enlace
+
+        await conciliar(conexao, MESH, (rel("a", "b"),), T0, completo=True)
+        await conexao.execute(
+            leitura.insert().values(
+                sujeito=sujeito_do_enlace("b", "a"), metrica="rf_snr_db",
+                valor=40.0, qualidade="boa", rotulos={}, modulo="rajant", em=T0,
+            )
+        )
+        (v,) = await vizinhos(conexao, "a", T0 + timedelta(minutes=1))
+        assert v["medidas"] == {}
+
+
 class TestConsultaTemporal:
     async def test_o_grafo_de_ontem_continua_la(self, conexao) -> None:
         """É a pergunta que justifica guardar validade em vez de sobrescrever."""
