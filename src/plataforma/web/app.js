@@ -87,7 +87,7 @@
     ativos: [], sinais: [], achados: {}, resumo: {}, saude: {}, transicoes: [],
     sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
-    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {}, eventos: [],
+    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {}, eventos: [], janela: {}, metricas: [],
     relSel: null, relJanela: "7d", relLista: null,
   };
 
@@ -728,9 +728,11 @@
     </div>`;
   }
 
+  const janelaDe = (c, i) => S.janela[i] || c.opcoes?.janela || "6h";
+
   function cxGrafico(c, x, i) {
     const metrica = c.opcoes?.metrica || "rf_snr_db";
-    const janela = c.opcoes?.janela || "6h";
+    const janela = janelaDe(c, i);
     const nome = (METRICA[metrica] || [metrica, "", 1])[0];
     const s = (S.series || {})[`${metrica}|${janela}`];
 
@@ -843,6 +845,49 @@
 
   const LARGURA = { 1: "g1c", 2: "g2c", 3: "g3c", 4: "g4c" };
 
+  const JANELAS = ["30m", "6h", "24h", "7d", "30d"];
+
+  /** O painel que aparece em modo de edição, um controle por opção declarada.
+   *
+   *  Dirigido pelo **tipo** da opção, não pelo tipo do cartão: acrescentar um
+   *  cartão com opções passa a não exigir tocar em JavaScript nenhum — que é
+   *  a mesma razão de o catálogo existir. */
+  function controleDeOpcao(o, valor, i) {
+    const id = `op-${i}-${o.nome}`;
+    const comum = `data-opcao="${i}:${o.nome}" id="${id}"`;
+    let controle;
+    if (o.tipo === "metrica") {
+      const opts = (S.metricas || []).map((m) => `<option value="${esc(m.nome)}"
+        ${m.nome === valor ? "selected" : ""}>${esc(METRICA[m.nome]?.[0] || m.nome)}${
+          m.unidade ? ` (${esc(m.unidade)})` : ""}</option>`).join("");
+      controle = `<select ${comum}>${opts}</select>`;
+    } else if (o.tipo === "janela") {
+      controle = `<select ${comum}>${JANELAS.map((j) => `<option value="${j}"
+        ${j === valor ? "selected" : ""}>${j}</option>`).join("")}</select>`;
+    } else if (o.tipo === "escolha") {
+      controle = `<select ${comum}>${(o.escolhas || []).map((c) => `<option value="${esc(c)}"
+        ${c === valor ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+    } else if (o.tipo === "inteiro") {
+      controle = `<input type="number" min="1" max="500" ${comum}
+        value="${esc(valor ?? o.padrao ?? 10)}">`;
+    } else {
+      controle = `<textarea class="campo-texto" rows="4" ${comum}
+        placeholder="${esc(o.ajuda || "")}">${esc(valor ?? "")}</textarea>`;
+    }
+    return `<label class="opcao" for="${id}"><span>${esc(o.rotulo)}</span>
+      ${controle}${o.ajuda ? `<i class="nota">${esc(o.ajuda)}</i>` : ""}</label>`;
+  }
+
+  function painelDeOpcoes(cartao, i) {
+    const def = S.catalogo.find((d) => d.tipo === cartao.tipo);
+    // O texto edita-se dentro do próprio cartão; repetir aqui seria dois
+    // campos para a mesma coisa.
+    const ops = (def?.opcoes || []).filter((o) => o.tipo !== "texto");
+    if (!ops.length) return "";
+    return `<div class="opcoes">${ops.map((o) =>
+      controleDeOpcao(o, cartao.opcoes?.[o.nome] ?? o.padrao, i)).join("")}</div>`;
+  }
+
   function desenharArranjo(x) {
     const cartoes = (S.arranjo?.cartoes || []).filter((c) => c.visivel !== false);
     return `<div class="tela">${cartoes.map((c, i) => {
@@ -857,7 +902,8 @@
         <button data-renomear="${i}" title="Renomear">✎</button>
         <button data-remover="${i}" title="Remover">✕</button></div>` : "";
       return `<div class="vaga ${LARGURA[c.largura] || "g1c"}
-        ${S.editandoTela ? "editando" : ""}">${ferramentas}${corpo}</div>`;
+        ${S.editandoTela ? "editando" : ""}">${ferramentas}${corpo}${
+        S.editandoTela ? painelDeOpcoes(c, i) : ""}</div>`;
     }).join("")}</div>`;
   }
 
@@ -1060,8 +1106,9 @@
    *  no arranjo não custa consulta. */
   async function carregarSeries(chave) {
     const pedidos = (S.arranjo?.cartoes || [])
-      .filter((c) => c.tipo === "grafico" && c.visivel !== false)
-      .map((c) => [c.opcoes?.metrica || "rf_snr_db", c.opcoes?.janela || "6h"]);
+      .map((c, i) => [c, i])
+      .filter(([c]) => c.tipo === "grafico" && c.visivel !== false)
+      .map(([c, i]) => [c.opcoes?.metrica || "rf_snr_db", janelaDe(c, i)]);
     S.series = {};
     await Promise.all(pedidos.map(async ([m, j]) => {
       const q = new URLSearchParams({ chave, metrica: m, janela: j });
@@ -1254,15 +1301,13 @@
     if (brj) { S.relJanela = brj.dataset.relJanela; await pintarRelatorios(); return; }
     const bj = e.target.closest("[data-janela-ir]");
     if (bj && S.dispSel) {
-      const cartao = bj.closest("[data-cartao]");
-      const c = S.arranjo?.cartoes?.[Number(cartao.dataset.cartao)];
-      if (c) {
-        // Muda só em memória: a janela é escolha de quem está olhando agora,
-        // não configuração da tela. Salvar exigiria "Personalizar tela".
-        c.opcoes = { ...(c.opcoes || {}), janela: bj.dataset.janelaIr };
-        await carregarSeries(S.dispSel);
-        await pintarAba();
-      }
+      // A janela é escolha de quem está olhando **agora**, e por isso mora
+      // fora do arranjo: escrever nele fazia a mudança ser descartada na
+      // repintura seguinte, quando o arranjo é relido do servidor. O padrão
+      // continua vindo da tela salva; isto só o sobrepõe nesta sessão.
+      S.janela[bj.closest("[data-cartao]").dataset.cartao] = bj.dataset.janelaIr;
+      await carregarSeries(S.dispSel);
+      await pintarAba();
       return;
     }
     const dp = e.target.closest("[data-disp]");
@@ -1313,6 +1358,18 @@
           nota: "vale para todo dispositivo com este papel" },
       ]);
     }
+  });
+
+  document.body.addEventListener("change", async (e) => {
+    const ctl = e.target.closest("[data-opcao]");
+    if (!ctl || !S.arranjo) return;
+    const [indice, nome] = ctl.dataset.opcao.split(":");
+    const c = S.arranjo.cartoes[Number(indice)];
+    if (!c) return;
+    const valor = ctl.type === "number" ? Number(ctl.value) : ctl.value;
+    c.opcoes = { ...(c.opcoes || {}), [nome]: valor };
+    if (c.tipo === "grafico" && S.dispSel) await carregarSeries(S.dispSel);
+    await pintarAba();
   });
 
   document.body.addEventListener("input", (e) => {
@@ -1380,7 +1437,10 @@
     const saude = await api("/api/v1/saude").catch(() => ({}));
     S.exigeLogin = !!saude.exige_login;
     if (S.exigeLogin && !S.eu.autenticado) { telaEntrada(); return; }
-    S.catalogo = await api("/api/v1/catalogo").catch(() => []);
+    [S.catalogo, S.metricas] = await Promise.all([
+      api("/api/v1/catalogo").catch(() => []),
+      api("/api/v1/metricas?com_serie=true").catch(() => []),
+    ]);
     await atualizar();
   }
 

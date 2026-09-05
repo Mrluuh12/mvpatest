@@ -527,6 +527,28 @@ E o estado incerto é **hachurado**, não âmbar. Vermelho e âmbar têm ΔE 4,6
 deuteranopia: indistinguíveis. Nas pastilhas isso passa porque há texto junto
 e a cor é reforço; num desenho ela seria o único sinal.
 
+### Criar e configurar um gráfico
+
+**Personalizar tela** → **+ Cartão** → *Gráfico*. Cada cartão com opções ganha
+um painel embaixo, em modo de edição: qual métrica, qual janela abre, quantas
+linhas, a partir de que severidade.
+
+O painel é dirigido pelo **tipo** da opção declarada no catálogo, não pelo tipo
+do cartão. Sem isso, a interface teria de conhecer cada cartão por dentro — o
+acoplamento que o catálogo existe para evitar. Com isso, acrescentar um cartão
+com opções não exige tocar em JavaScript nenhum, e há teste que falha se
+alguém declarar um tipo de opção que a tela não sabe desenhar.
+
+O seletor de métrica só oferece **as que têm série**. Deixar escolher uma que
+só tem última leitura seria convidar a criar um cartão que diz "sem série"
+para sempre.
+
+**Janela padrão e janela de agora são coisas diferentes.** A do painel é o que
+a tela abre e fica salva no arranjo; os botões no topo do gráfico são a escolha
+de quem está olhando neste momento e moram fora do arranjo. Escrevê-las no
+mesmo lugar fazia a escolha do botão ser descartada na repintura seguinte,
+quando o arranjo é relido do servidor — o botão simplesmente não funcionava.
+
 ### Ausência não vira linha reta
 
 Métrica que só tem a última leitura devolve a frase, não um desenho. Uma linha

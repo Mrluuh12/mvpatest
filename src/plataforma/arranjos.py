@@ -50,6 +50,32 @@ class TipoCartao(StrEnum):
     AUDITORIA = "auditoria"
 
 
+class TipoOpcao(StrEnum):
+    """A forma do controle que a tela desenha para esta opção.
+
+    Sem isso, a opção é só um nome numa lista e a interface teria de conhecer
+    cada cartão por dentro — que é exatamente o acoplamento que o catálogo
+    existe para evitar. Com o tipo, acrescentar um cartão com opções não exige
+    tocar em JavaScript nenhum.
+    """
+
+    METRICA = "metrica"
+    JANELA = "janela"
+    INTEIRO = "inteiro"
+    TEXTO = "texto"
+    ESCOLHA = "escolha"
+
+
+class Opcao(BaseModel):
+    nome: str
+    rotulo: str
+    tipo: TipoOpcao
+    padrao: str | int | None = None
+    #: Só para ESCOLHA. Fechada de propósito, como todo o resto.
+    escolhas: tuple[str, ...] = ()
+    ajuda: str = ""
+
+
 class DefCartao(BaseModel):
     """O que um tipo de cartão é, onde serve e o que aceita configurar."""
 
@@ -57,7 +83,7 @@ class DefCartao(BaseModel):
     titulo_padrao: str
     contextos: tuple[Contexto, ...]
     descricao: str
-    opcoes: tuple[str, ...] = ()
+    opcoes: tuple[Opcao, ...] = ()
     disponivel: bool = True
     motivo: str = ""
 
@@ -67,7 +93,7 @@ A, D = Contexto.ATIVO, Contexto.DISPOSITIVO
 CATALOGO: tuple[DefCartao, ...] = (
     DefCartao(
         tipo=TipoCartao.RESUMO, titulo_padrao="Resumo do Ativo", contextos=(A, D),
-        descricao="Pares campo e valor.", opcoes=("campos",),
+        descricao="Pares campo e valor.",
     ),
     DefCartao(
         tipo=TipoCartao.ALCANCE, titulo_padrao="Alcance", contextos=(A,),
@@ -81,15 +107,18 @@ CATALOGO: tuple[DefCartao, ...] = (
         tipo=TipoCartao.TELEMETRIA, titulo_padrao="Medições", contextos=(A, D),
         descricao="O que foi de fato medido: alcance, latência, perda, "
                   "composição e quando foi a última leitura.",
-        opcoes=("linhas",),
     ),
     DefCartao(
         tipo=TipoCartao.TRANSICOES, titulo_padrao="Últimas mudanças", contextos=(A, D),
-        descricao="Mudanças de estado observadas.", opcoes=("limite",),
+        descricao="Mudanças de estado observadas.",
+        opcoes=(
+            Opcao(nome="limite", rotulo="Quantas linhas", tipo=TipoOpcao.INTEIRO,
+                  padrao=10),
+        ),
     ),
     DefCartao(
         tipo=TipoCartao.DISPOSITIVOS, titulo_padrao="Dispositivos", contextos=(A,),
-        descricao="Tabela dos dispositivos do ativo.", opcoes=("colunas",),
+        descricao="Tabela dos dispositivos do ativo.",
     ),
     DefCartao(
         tipo=TipoCartao.IDENTIDADE, titulo_padrao="Identidade", contextos=(D,),
@@ -98,19 +127,36 @@ CATALOGO: tuple[DefCartao, ...] = (
     DefCartao(
         tipo=TipoCartao.VIZINHOS, titulo_padrao="Vizinhança", contextos=(D,),
         descricao="Com quem este equipamento está falando agora, e desde quando.",
-        opcoes=("limite",),
     ),
     DefCartao(
         tipo=TipoCartao.GRAFICO, titulo_padrao="Gráfico", contextos=(D,),
         descricao="Uma métrica ao longo do tempo. A série vem de quem a guarda "
                   "— o Prometheus, ou as transições de estado.",
-        opcoes=("metrica", "janela"),
+        opcoes=(
+            Opcao(nome="metrica", rotulo="O que medir", tipo=TipoOpcao.METRICA,
+                  padrao="rf_snr_db",
+                  ajuda="só aparecem métricas que têm série; o resto tem apenas "
+                        "a última leitura"),
+            Opcao(nome="janela", rotulo="Janela padrão", tipo=TipoOpcao.JANELA,
+                  padrao="6h",
+                  ajuda="quem olha pode mudar na hora; isto é só o que abre"),
+        ),
     ),
     DefCartao(
         tipo=TipoCartao.EVENTOS, titulo_padrao="O que ele contou", contextos=(A, D),
         descricao="Syslog e traps que o próprio equipamento enviou, com o grau "
                   "de confiança na origem.",
-        opcoes=("limite", "severidade_minima"),
+        opcoes=(
+            Opcao(nome="limite", rotulo="Quantas linhas", tipo=TipoOpcao.INTEIRO,
+                  padrao=20),
+            Opcao(
+                nome="severidade_minima", rotulo="A partir de", tipo=TipoOpcao.ESCOLHA,
+                padrao="depuracao",
+                escolhas=("emergencia", "alerta", "critico", "erro",
+                          "aviso", "atencao", "informativo", "depuracao"),
+                ajuda="esconde o que for menos grave que isto",
+            ),
+        ),
     ),
     DefCartao(
         tipo=TipoCartao.IMAGENS, titulo_padrao="Imagens", contextos=(A, D),
@@ -119,11 +165,17 @@ CATALOGO: tuple[DefCartao, ...] = (
     DefCartao(
         tipo=TipoCartao.TEXTO, titulo_padrao="Observações", contextos=(A, D),
         descricao="Texto livre: procedimento, contato do fornecedor, lembrete.",
-        opcoes=("conteudo",),
+        opcoes=(
+            Opcao(nome="conteudo", rotulo="Conteúdo", tipo=TipoOpcao.TEXTO),
+        ),
     ),
     DefCartao(
         tipo=TipoCartao.AUDITORIA, titulo_padrao="Histórico de alterações",
-        contextos=(A, D), descricao="Quem mudou o quê, e quando.", opcoes=("limite",),
+        contextos=(A, D), descricao="Quem mudou o quê, e quando.",
+        opcoes=(
+            Opcao(nome="limite", rotulo="Quantas linhas", tipo=TipoOpcao.INTEIRO,
+                  padrao=8),
+        ),
     ),
     DefCartao(
         tipo=TipoCartao.ACOES, titulo_padrao="Ações Rápidas", contextos=(A, D),

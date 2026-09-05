@@ -27,6 +27,7 @@ from plataforma.arranjos import (
     Cartao,
     Contexto,
     TipoCartao,
+    TipoOpcao,
     cascata,
 )
 
@@ -68,6 +69,58 @@ class TestCatalogo:
             f"o cartão {definicao.tipo.value!r} existe no catálogo mas app.js "
             f"não sabe desenhá-lo"
         )
+
+
+class TestOpcoes:
+    """As opções são **tipadas** para a tela saber desenhar o controle certo.
+
+    Sem o tipo, a opção seria só um nome numa lista e a interface teria de
+    conhecer cada cartão por dentro — o acoplamento que o catálogo existe para
+    evitar. Com ele, acrescentar um cartão com opções não exige tocar em
+    JavaScript nenhum, e é isso que estes testes guardam.
+    """
+
+    #: Os tipos que `controleDeOpcao` em app.js sabe desenhar.
+    DESENHAVEIS = {"metrica", "janela", "inteiro", "texto", "escolha"}
+
+    @pytest.mark.parametrize("definicao", CATALOGO, ids=lambda d: d.tipo.value)
+    def test_todo_tipo_de_opcao_tem_controle_na_tela(self, definicao) -> None:
+        for o in definicao.opcoes:
+            assert o.tipo.value in self.DESENHAVEIS, (
+                f"{definicao.tipo.value}.{o.nome} usa {o.tipo.value!r}, que a "
+                f"tela não sabe desenhar"
+            )
+
+    @pytest.mark.parametrize("definicao", CATALOGO, ids=lambda d: d.tipo.value)
+    def test_toda_opcao_tem_rotulo_de_gente(self, definicao) -> None:
+        """`severidade_minima` num formulário é nome de coluna, não pergunta."""
+        for o in definicao.opcoes:
+            assert o.rotulo and o.rotulo != o.nome
+
+    @pytest.mark.parametrize("definicao", CATALOGO, ids=lambda d: d.tipo.value)
+    def test_escolha_traz_as_escolhas(self, definicao) -> None:
+        for o in definicao.opcoes:
+            if o.tipo is TipoOpcao.ESCOLHA:
+                assert o.escolhas, f"{o.nome} é escolha e não oferece nenhuma"
+            else:
+                assert not o.escolhas
+
+    def test_o_grafico_abre_numa_metrica_que_tem_serie(self) -> None:
+        """Abrir num cartão que diz "sem série" seria estrear com um buraco."""
+        from plataforma.series import tem_serie
+
+        (metrica,) = [
+            o for o in POR_TIPO[TipoCartao.GRAFICO].opcoes if o.nome == "metrica"
+        ]
+        assert tem_serie(str(metrica.padrao))
+
+    def test_opcao_do_padrao_embutido_existe_no_catalogo(self) -> None:
+        """Um arranjo padrão que preencha opção inexistente é configuração que
+        nunca vai a lugar nenhum."""
+        for padrao in (ARRANJO_ATIVO_PADRAO, ARRANJO_DISPOSITIVO_PADRAO):
+            for c in padrao.cartoes:
+                validas = {o.nome for o in POR_TIPO[c.tipo].opcoes}
+                assert set(c.opcoes) <= validas, f"{c.tipo.value}: {set(c.opcoes) - validas}"
 
 
 class TestContexto:

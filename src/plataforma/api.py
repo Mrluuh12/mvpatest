@@ -380,6 +380,28 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         async with fonte._engine.connect() as conexao:
             return await leituras_de(conexao, sujeito)
 
+    @app.get("/api/v1/metricas", tags=["plataforma"])
+    def metricas(com_serie: bool = False) -> list[dict]:
+        """O dicionário canônico, para quem monta um cartão escolher.
+
+        Com ``com_serie``, só as que dá para desenhar. Oferecer uma métrica
+        sem série num seletor de gráfico é convidar o usuário a criar um
+        cartão que vai dizer "sem série" para sempre.
+        """
+        from . import series
+        from .dicionario import METRICAS
+
+        return [
+            {
+                "nome": m.nome,
+                "familia": m.familia.value,
+                "unidade": m.unidade,
+                "tem_serie": series.tem_serie(m.nome),
+            }
+            for m in METRICAS
+            if not com_serie or series.tem_serie(m.nome)
+        ]
+
     @app.get("/api/v1/eventos", tags=["plataforma"])
     async def ver_eventos(
         sujeito: str | None = None,

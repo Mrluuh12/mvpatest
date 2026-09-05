@@ -475,3 +475,16 @@ td.num{text-align:right}
   .ressalva{color:#F0D08A;background:#2C2411;border-top-color:#5C4A16}
 }
 .obs-conf{font-size:11px;color:var(--apagado);line-height:1.5}
+
+/* ====================== painel de opções do cartão ====================== */
+/* Aparece só em modo de edição, e é dirigido pelo TIPO da opção declarada no
+   catálogo — acrescentar um cartão com opções não exige tocar em JS. */
+.opcoes{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;padding:12px;
+  border:1px dashed var(--azul);border-radius:var(--raio);background:var(--azul-claro)}
+.opcao{display:flex;flex-direction:column;gap:4px;font-size:11.5px;
+  color:var(--texto-2);min-width:150px;flex:1}
+.opcao>span{font-weight:600;color:var(--texto)}
+.opcao select,.opcao input{border:1px solid var(--linha-forte);border-radius:6px;
+  padding:6px 8px;font:inherit;font-size:12px;background:var(--cartao);color:var(--texto)}
+.opcao select:focus,.opcao input:focus{outline:none;border-color:var(--azul)}
+.opcao .nota{font-style:normal;font-size:10.5px;color:var(--apagado);line-height:1.4}
