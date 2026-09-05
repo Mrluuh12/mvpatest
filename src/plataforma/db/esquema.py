@@ -255,6 +255,28 @@ evento = Table(
 )
 
 
+#: Cada sonda de diagnóstico que alguém rodou. Guardado por dois motivos, e o
+#: segundo é o que justifica a tabela: rastrear quem sondou o quê, e permitir
+#: a pergunta que resolve caso difícil — *"como estava o caminho ontem?"*.
+#: Comparar o traceroute de agora com o da semana passada é metade do
+#: diagnóstico de rede que muda.
+diagnostico = Table(
+    "diagnostico",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("sonda", Text, nullable=False),
+    Column("alvo", Text, nullable=False),
+    Column("sujeito", Text),
+    Column("por", Text, nullable=False),
+    Column("em", DateTime(timezone=True), nullable=False),
+    Column("duracao_s", Float, nullable=False, server_default=text("0")),
+    Column("ok", Boolean, nullable=False),
+    Column("resumo", Text, nullable=False),
+    Column("resultado", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Index("ix_diagnostico_sujeito", "sujeito", "em"),
+)
+
+
 #: Saúde de cada módulo — as cinco séries obrigatórias, no seu estado atual.
 saude_modulo = Table(
     "saude_modulo",

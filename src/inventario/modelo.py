@@ -186,6 +186,12 @@ class TipoAresta(StrEnum):
 class Permissao(StrEnum):
     VER = "ver"
     EDITAR_PAINEL = "editar_painel"
+    #: Rodar sonda de diagnóstico: ping, traceroute, SNMP walk, teste de
+    #: porta. É **separada** de EXECUTAR_ACAO de propósito — quem pode
+    #: perguntar "este endereço responde?" não deveria por isso poder
+    #: reiniciar o rádio de um caminhão em operação. Conflatar as duas seria
+    #: dar poder de parar máquina a quem só precisava diagnosticar.
+    DIAGNOSTICAR = "diagnosticar"
     EXECUTAR_ACAO = "executar_acao"
     APROVAR_ACAO = "aprovar_acao"
     CADASTRAR_ATIVO = "cadastrar_ativo"
@@ -212,6 +218,7 @@ MATRIZ_PAPEIS: dict[PapelUsuario, frozenset[Permissao]] = {
         {
             Permissao.VER,
             Permissao.EDITAR_PAINEL,
+            Permissao.DIAGNOSTICAR,
             Permissao.EXECUTAR_ACAO,
             Permissao.CADASTRAR_ATIVO,
             Permissao.EDITAR_ATIVO,
@@ -219,9 +226,18 @@ MATRIZ_PAPEIS: dict[PapelUsuario, frozenset[Permissao]] = {
         }
     ),
     PapelUsuario.OPERADOR: frozenset(
-        {Permissao.VER, Permissao.EDITAR_PAINEL, Permissao.EXECUTAR_ACAO}
+        {
+            Permissao.VER,
+            Permissao.EDITAR_PAINEL,
+            Permissao.DIAGNOSTICAR,
+            Permissao.EXECUTAR_ACAO,
+        }
     ),
-    PapelUsuario.CAMPO: frozenset({Permissao.VER, Permissao.EXECUTAR_ACAO}),
+    # Quem está em campo diagnostica — é o trabalho dele. Executar ação
+    # continua separado.
+    PapelUsuario.CAMPO: frozenset(
+        {Permissao.VER, Permissao.DIAGNOSTICAR, Permissao.EXECUTAR_ACAO}
+    ),
     PapelUsuario.LEITOR: frozenset({Permissao.VER}),
 }
 

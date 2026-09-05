@@ -491,3 +491,22 @@ td.num{text-align:right}
 /* Enlace abaixo de 10 dB de SNR: é o que cai primeiro. A cor é reforço — a
    coluna com o número é o sinal primário. */
 tr.enlace-ruim td:nth-child(2){color:var(--vermelho);font-weight:600}
+
+/* ============================= diagnóstico ============================== */
+.sondas{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.sondas .bt{font-size:12px;padding:6px 12px}
+.saida{border-radius:var(--raio);padding:12px 14px;font-size:12.5px;
+  border:1px solid var(--linha-forte);background:var(--cartao-2)}
+/* Sonda correndo não é sonda que deu certo. Enquanto não há resposta, a
+   moldura fica neutra e pulsando: verde aqui seria a tela afirmando um
+   resultado que ainda não existe. */
+.saida.rodando{border-style:dashed;animation:pulsa 1.1s ease-in-out infinite}
+@keyframes pulsa{50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.saida.rodando{animation:none}}
+.saida.ok{border-color:var(--verde);background:var(--verde-fundo)}
+.saida.mau{border-color:var(--vermelho);background:var(--vermelho-fundo)}
+.saida b{display:block;margin-bottom:6px}
+.saida pre{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.6;
+  white-space:pre-wrap;color:var(--texto-2)}
+.saida .nota{display:block;margin-top:6px;font-style:normal;font-size:10.5px;
+  color:var(--apagado)}

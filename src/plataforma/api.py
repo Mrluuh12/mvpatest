@@ -606,7 +606,7 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
             return JSONResponse({"detail": "é preciso entrar"}, status_code=401)
         return await seguir(pedido)
 
-    app.include_router(criar_rotas(lambda: fonte._engine))
+    app.include_router(criar_rotas(lambda: fonte._engine, lambda: fonte.repo))
 
     if WEB.is_dir():
         app.mount("/estatico", StaticFiles(directory=WEB), name="estatico")

@@ -9,13 +9,23 @@ falho que não deixa vestígio.
 from __future__ import annotations
 
 import os
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import insert, select, update
 
-from inventario.modelo import PapelUsuario, Permissao, Zona
+from inventario.modelo import (
+    MATRIZ_PAPEIS,
+    Concessao,
+    PapelUsuario,
+    Permissao,
+    Usuario,
+    Zona,
+)
+from plataforma.autorizacao import permissoes_efetivas
 from plataforma.db import contas
 from plataforma.db.esquema import auditoria, sessao, usuario
 from plataforma.db.repositorio_pg import apagar_esquema, criar_engine, criar_esquema
@@ -231,3 +241,72 @@ class TestAuditoria:
             )
         async with engine.connect() as c:
             assert len((await c.execute(select(auditoria))).all()) == 1
+
+
+class TestPermissoesNaTela:
+    """A tela desenha o que o servidor já decidiu — e nada além disso.
+
+    Havia aqui uma duplicação silenciosa: ``app.js`` carregava a própria cópia
+    da matriz de papéis, para saber se desenhava o botão habilitado. Cópia de
+    regra de autorização sai de sincronia, e saiu — ``diagnosticar`` nasceu, o
+    servidor passou a aceitar, e o botão continuou cinza sem mensagem nenhuma.
+    Estes testes existem para que a cópia não volte.
+    """
+
+    def _usuario(self, *concessoes) -> Usuario:
+        return Usuario(
+            login="p",
+            nome="P",
+            concessoes=tuple(
+                Concessao(papel=papel, zonas=frozenset(zonas)) for papel, zonas in concessoes
+            ),
+        )
+
+    def test_traz_toda_permissao_do_papel_sem_lista_escrita_a_mao(self) -> None:
+        """O teste não enumera permissões: pergunta à mesma matriz. Se amanhã
+        nascer outra, ela aparece aqui sozinha — que é o ponto."""
+        u = self._usuario((PapelUsuario.ENGENHEIRO, [Zona.OT_NIVEL3]))
+        efetivas = permissoes_efetivas(u)
+        assert set(efetivas["ot_nivel3"]) == {
+            p.value for p in MATRIZ_PAPEIS[PapelUsuario.ENGENHEIRO]
+        }
+
+    def test_zona_sem_concessao_vem_vazia_e_nao_ausente(self) -> None:
+        """Vazia é resposta: "aqui você não pode nada". Ausente faria a tela
+        confundir zona sem permissão com zona que ela não conhece."""
+        u = self._usuario((PapelUsuario.ADMINISTRADOR, [Zona.CORPORATIVA]))
+        efetivas = permissoes_efetivas(u)
+        assert efetivas["ot_nivel3"] == []
+        assert set(efetivas) == {z.value for z in Zona}, "toda zona é respondida"
+
+    def test_papeis_diferentes_por_zona_nao_se_misturam(self) -> None:
+        u = self._usuario(
+            (PapelUsuario.OPERADOR, [Zona.CORPORATIVA]),
+            (PapelUsuario.LEITOR, [Zona.OT_NIVEL3]),
+        )
+        efetivas = permissoes_efetivas(u)
+        assert Permissao.EXECUTAR_ACAO.value in efetivas["corporativa"]
+        assert efetivas["ot_nivel3"] == [Permissao.VER.value]
+
+    def test_usuario_desativado_nao_pode_nada_em_lugar_nenhum(self) -> None:
+        u = self._usuario((PapelUsuario.ADMINISTRADOR, list(Zona))).model_copy(
+            update={"ativo": False}
+        )
+        assert all(not v for v in permissoes_efetivas(u).values())
+
+    def test_a_tela_nao_guarda_copia_da_matriz(self) -> None:
+        """Guarda de regressão. Na tela, um nome de permissão só pode aparecer
+        como pergunta — ``pode("diagnosticar")`` — nunca dentro de uma lista.
+        Lista é matriz, e matriz na tela é a cópia que sai de sincronia. Se
+        este teste falhar, a duplicação voltou: some com ela, não com o teste.
+        """
+        js = (Path(__file__).resolve().parents[1] / "src/plataforma/web/app.js").read_text(
+            encoding="utf-8"
+        )
+        soltas = [
+            p.value
+            for p in Permissao
+            for m in re.finditer(rf'"{p.value}"', js)
+            if not js[max(0, m.start() - 5) : m.start()].endswith("pode(")
+        ]
+        assert not soltas, f"permissão fora de pode() em app.js: {soltas}"

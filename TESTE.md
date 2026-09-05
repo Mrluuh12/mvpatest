@@ -168,7 +168,47 @@ deveria, ou alguém está forjando, e as duas coisas são achado.
 > mensagem dizendo ser qualquer IP. Por isso todo evento carrega `confianca`, e
 > a tela diz isso em letras miúdas: um evento não é prova, é o que alguém disse.
 
-## 6. Rodar a suíte
+## 6. Diagnóstico dirigido — perguntar a um equipamento agora
+
+Coleta responde *"como ele esteve"*. Diagnóstico responde *"o que está
+acontecendo com ele **neste** minuto"* — e é uma pessoa que dispara, num alvo,
+por um motivo. Na ficha de qualquer dispositivo há o cartão **Diagnóstico**
+com quatro sondas:
+
+| Sonda | O que responde | Perigo |
+|---|---|---|
+| **Ping** | o endereço responde? com que latência e que perda? | leitura |
+| **Caminho** | por onde o tráfego passa até ele (traceroute) | leitura |
+| **Porta TCP** | *uma* porta está aberta? | leitura |
+| **Leitura SNMP** | o que ele diz num OID específico | leitura |
+
+Três coisas para reparar, porque nenhuma é acidental:
+
+1. **A permissão é conferida na zona do equipamento, não na sua.** Abra um
+   dispositivo `corporativa` e outro `ot_nivel3` com a mesma conta. Se a sua
+   concessão é só na corporativa, no segundo os botões vêm desabilitados **e
+   a tela diz por quê** — `Requer a permissão diagnosticar na zona ot_nivel3`.
+   Botão cinza sem explicação é a pior forma de negar.
+2. **`diagnosticar` é separado de `executar_acao`.** Quem pode perguntar "este
+   endereço responde?" não passa por isso a poder reiniciar o rádio de um
+   caminhão carregado. Leitor não diagnostica; campo, operador, engenheiro e
+   administrador sim.
+3. **Toda sonda vira duas linhas de banco:** uma em `auditoria` (quem, quando,
+   em quê) e uma em `diagnostico` (o resultado inteiro). Confira:
+
+```bash
+psql -d plataforma -c "select em, acao, sujeito, detalhe->>'alvo' from auditoria
+                       where acao like 'diagnostico%' order by em desc limit 5"
+```
+
+O que a plataforma **recusa** a fazer está escrito no topo de
+`src/plataforma/diagnostico.py`, com o motivo de cada recusa: varredura de
+faixa de portas (é reconhecimento, e já derrubou CLP em mina), teste de banda
+(satura o enlace justamente enquanto se investiga) e captura de pacotes (lê
+carga útil, e carga útil tem credencial). São ausências decididas, não
+pendências.
+
+## 7. Rodar a suíte
 
 ```bash
 export PLATAFORMA_BANCO_TESTE="postgresql+asyncpg://USUARIO@HOST:5432/plataforma_teste"
@@ -183,7 +223,7 @@ O banco de teste é separado de propósito: as fixtures apagam o esquema entre
 os casos, e uma suíte que destrói o banco de desenvolvimento é uma suíte que
 as pessoas param de rodar.
 
-## 7. Onde olhar quando algo não bate
+## 8. Onde olhar quando algo não bate
 
 | Sintoma | Onde a resposta está |
 |---|---|
@@ -191,6 +231,7 @@ as pessoas param de rodar.
 | "o que a plataforma ainda não coleta?" | aba **Cobertura** — por família, com o motivo |
 | "o cadastro está errado onde?" | aba **Cadastro** — conflitos, homônimos, divergências |
 | "quem mudou isto?" | cartão **Histórico de alterações** na ficha |
+| "quem sondou este rádio, e o que deu?" | tabela `diagnostico` e `auditoria` |
 
 ## Verificações que valem fazer no primeiro dia
 
@@ -215,3 +256,14 @@ as pessoas param de rodar.
    Disponibilidade. A faixa âmbar embaixo tem de dizer quantos equipamentos
    ficaram fora da média por falta de observação. Se ela sumir, desconfie: ou
    todo o parque foi sondado, ou alguém tirou a ressalva.
+7. **A sonda roda no laço que o servidor usa.** Clique **Ping** num
+   dispositivo pela tela — não só pelo teste. O ping usa socket cru, e
+   `sock_sendto`/`sock_recvfrom` existem no asyncio padrão e **não** no uvloop,
+   que é o laço do uvicorn: escrito com eles, o módulo passa em toda a suíte e
+   estoura no primeiro clique. `tests/test_diagnostico.py` roda a sonda nos
+   dois laços de propósito, mas o clique é a verificação que não mente.
+8. **A tela não decide autorização — desenha a decisão do servidor.**
+   `GET /api/v1/eu` devolve `permissoes` por zona, calculadas pela mesma função
+   que a rota usa para aceitar ou recusar. Se um botão novo nascer cinza sem
+   motivo, é sinal de que alguém voltou a escrever a matriz de papéis na tela;
+   `tests/test_contas.py::TestPermissoesNaTela` existe para barrar isso.

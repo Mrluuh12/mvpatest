@@ -82,9 +82,68 @@ class ContaVista(BaseModel):
         )
 
 
-def criar_rotas(obter_engine) -> APIRouter:
-    """``obter_engine`` devolve o engine em uso, ou ``None`` sem banco."""
+def permissoes_efetivas(usuario: Usuario) -> dict[str, list[str]]:
+    """O que esta pessoa pode, por zona, para a tela desenhar.
+
+    A tela carregava uma cópia da matriz de papéis. Cópia de regra de
+    autorização sai de sincronia — e saiu: uma permissão nova ficou de fora e o
+    botão nasceu desabilitado sem ninguém entender por quê. Aqui a resposta vem
+    da mesma função que o servidor usa para decidir, ``Usuario.pode``, e por
+    isso não há o que sincronizar.
+
+    Isto **não** é a autorização: é o desenho dela. Quem decide continua sendo
+    o servidor, a cada pedido. Uma tela adulterada consegue habilitar o botão;
+    não consegue fazer a rota aceitar.
+    """
+    return {
+        zona.value: [p.value for p in Permissao if usuario.pode(p, zona)] for zona in Zona
+    }
+
+
+def criar_rotas(obter_engine, obter_repo=None) -> APIRouter:
+    """``obter_engine`` devolve o engine em uso, ou ``None`` sem banco.
+
+    ``obter_repo`` devolve o repositório de inventário — o diagnóstico precisa
+    dele para saber o IP e a **zona** do alvo antes de sondar, e a zona é o
+    que decide se a sonda pode sair.
+    """
     rotas = APIRouter()
+
+    def obter_dispositivo(chave: str):
+        repo = obter_repo() if obter_repo else None
+        return repo.dispositivo(chave) if repo else None
+
+    def zona_local() -> Zona:
+        from plataforma.diagnostico import zona_da_plataforma
+
+        return zona_da_plataforma()
+
+    async def sessao_snmp(motor):
+        """A sessão SNMP da sonda, aberta do cofre — ou ``None``.
+
+        ``None`` não é falha silenciosa: a sonda devolve a instrução de como
+        cadastrar a credencial, que é o que a pessoa precisa saber.
+        """
+        import os
+
+        from plataforma.db.credenciais import abrir, listar
+        from plataforma.modulos.snmp import Credencial, SessaoPysnmp
+
+        nome = os.environ.get("PLATAFORMA_SNMP_CREDENCIAL")
+        if not nome:
+            return None
+        try:
+            async with motor.connect() as conexao:
+                segredo = await abrir(conexao, nome, zona_local())
+                atributos = next(
+                    (c["atributos"] for c in await listar(conexao) if c["nome"] == nome),
+                    {},
+                )
+        except Exception:  # noqa: BLE001
+            return None
+        if segredo is None:
+            return None
+        return SessaoPysnmp(Credencial(**segredo), porta=int(atributos.get("porta", 161)))
 
     def engine_ou_erro() -> AsyncEngine:
         motor = obter_engine()
@@ -157,6 +216,7 @@ def criar_rotas(obter_engine) -> APIRouter:
         return {
             "autenticado": True,
             "expira_em": conta.expira_em,
+            "permissoes": permissoes_efetivas(conta.usuario),
             **ContaVista.de(conta.usuario).model_dump(),
         }
 
@@ -255,6 +315,91 @@ def criar_rotas(obter_engine) -> APIRouter:
                 detalhe={"de": atual.value, "para": nova.value},
             )
         return {"chave": chave, "zona": nova.value}
+
+    # ---------------------------- diagnóstico ----------------------------
+
+    @rotas.get("/api/v1/sondas", tags=["diagnostico"])
+    async def listar_sondas() -> list[dict]:
+        """As sondas que existem, com o grau de perigo à vista.
+
+        O perigo fica no manifesto para a tela avisar **antes**, e não depois.
+        """
+        from plataforma.diagnostico import Registro
+
+        registro = Registro(zona=zona_local())
+        registro.carregar_padrao()
+        return [
+            {
+                "nome": m.nome,
+                "rotulo": m.rotulo,
+                "descricao": m.descricao,
+                "perigo": m.perigo.value,
+                "limite_s": m.limite_s,
+                "parametros": [p.model_dump(mode="json") for p in m.parametros],
+            }
+            for m in (s.manifesto for s in registro.sondas.values())
+        ]
+
+    @rotas.post("/api/v1/diagnostico", tags=["diagnostico"])
+    async def rodar_sonda(corpo: dict = Body(...), conta=Depends(conta_atual)) -> dict:
+        """Roda uma sonda contra um dispositivo do inventário.
+
+        A permissão é conferida **na zona do alvo**, não na de quem pede: quem
+        pode diagnosticar a rede corporativa não passa por isso a poder
+        diagnosticar a OT.
+        """
+        from plataforma.db import diagnosticos
+        from plataforma.diagnostico import Registro, executar
+
+        motor = engine_ou_erro()
+        chave = str(corpo.get("chave") or "")
+        nome = str(corpo.get("sonda") or "")
+        parametros = corpo.get("parametros") or {}
+
+        alvo = obter_dispositivo(chave)
+        if alvo is None:
+            raise HTTPException(status_code=404, detail=f"dispositivo {chave!r} não existe")
+        if not alvo.ip:
+            raise HTTPException(
+                status_code=422,
+                detail="dispositivo sem IP no cadastro: não há para onde sondar",
+            )
+        usuario = exigir(conta, Permissao.DIAGNOSTICAR, Zona(alvo.zona))
+
+        registro = Registro(zona=zona_local())
+        registro.carregar_padrao(await sessao_snmp(motor))
+        try:
+            resultado = await executar(
+                registro, nome, alvo.ip, Zona(alvo.zona), parametros
+            )
+        except KeyError as erro:
+            raise HTTPException(
+                status_code=404,
+                detail=f"sonda {nome!r} não existe; há {sorted(registro.sondas)}",
+            ) from erro
+
+        async with motor.begin() as conexao:
+            await diagnosticos.registrar(
+                conexao, nome, alvo.ip, resultado, por=usuario.login, sujeito=chave
+            )
+            await contas.registrar(
+                conexao, f"diagnostico.{nome}", f"disp:{chave}",
+                login=usuario.login, zona=Zona(alvo.zona),
+                detalhe={"alvo": alvo.ip, "ok": resultado.ok},
+            )
+        return resultado.model_dump(mode="json")
+
+    @rotas.get("/api/v1/diagnostico", tags=["diagnostico"])
+    async def ver_diagnosticos(
+        sujeito: str | None = None, limite: int = 20, conta=Depends(conta_atual)
+    ) -> list[dict]:
+        """O histórico — é o que permite comparar hoje com a semana passada."""
+        exigir(conta, Permissao.VER, Zona.CORPORATIVA)
+        from plataforma.db import diagnosticos
+
+        motor = engine_ou_erro()
+        async with motor.connect() as conexao:
+            return await diagnosticos.historico(conexao, sujeito, limite=limite)
 
     # ------------------------------ arranjos -----------------------------
 

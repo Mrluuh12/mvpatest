@@ -140,6 +140,49 @@ class Sonda:
         return sum(difs) / len(difs)
 
 
+async def _pronto(laco: asyncio.AbstractEventLoop, fd: int, *, escrita: bool) -> None:
+    """Espera o descritor ficar pronto, por prontidão em vez de por método.
+
+    ``sock_sendto`` e ``sock_recvfrom`` existem no asyncio padrão e **não
+    existem no uvloop** — que é o laço que o uvicorn usa em produção. Escrito
+    com eles, este módulo passava em todo teste e estourava
+    ``NotImplementedError`` na primeira sonda disparada pela tela. Foi assim
+    que o defeito apareceu: não num teste, num clique.
+
+    ``add_reader``/``add_writer`` os dois laços implementam, e o socket já é
+    não-bloqueante — o caminho comum nem chega a esperar.
+    """
+    futuro = laco.create_future()
+    registrar = laco.add_writer if escrita else laco.add_reader
+    remover = laco.remove_writer if escrita else laco.remove_reader
+    registrar(fd, lambda: futuro.done() or futuro.set_result(None))
+    try:
+        await futuro
+    finally:
+        remover(fd)
+
+
+async def enviar_para(
+    laco: asyncio.AbstractEventLoop, sock: socket.socket, pacote: bytes, alvo: str
+) -> None:
+    while True:
+        try:
+            sock.sendto(pacote, (alvo, 0))
+            return
+        except BlockingIOError:
+            await _pronto(laco, sock.fileno(), escrita=True)
+
+
+async def receber_de(
+    laco: asyncio.AbstractEventLoop, sock: socket.socket, tamanho: int = 2048
+) -> tuple[bytes, Any]:
+    while True:
+        try:
+            return sock.recvfrom(tamanho)
+        except BlockingIOError:
+            await _pronto(laco, sock.fileno(), escrita=False)
+
+
 async def sondar(
     alvos: list[str], tentativas: int = 3, timeout_s: float = 1.0
 ) -> dict[str, Sonda]:
@@ -159,7 +202,7 @@ async def sondar(
             envio: dict[str, float] = {}
             for alvo in alvos:
                 try:
-                    await laco.sock_sendto(sock, pacote, (alvo, 0))
+                    await enviar_para(laco, sock, pacote, alvo)
                     envio[alvo] = time.perf_counter()
                     sondas[alvo].enviados += 1
                 except OSError:
@@ -172,7 +215,7 @@ async def sondar(
             while pendentes and (restante := limite - laco.time()) > 0:
                 try:
                     dados, origem = await asyncio.wait_for(
-                        laco.sock_recvfrom(sock, 2048), restante
+                        receber_de(laco, sock), restante
                     )
                 except TimeoutError:
                     break

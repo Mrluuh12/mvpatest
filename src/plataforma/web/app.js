@@ -87,7 +87,7 @@
     ativos: [], sinais: [], achados: {}, resumo: {}, saude: {}, transicoes: [],
     sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
-    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {}, eventos: [], janela: {}, metricas: [],
+    arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {}, eventos: [], janela: {}, metricas: [], sondas: [], diagResultado: null,
     relSel: null, relJanela: "7d", relLista: null,
   };
 
@@ -116,21 +116,15 @@
   const foto = (a) => (a ? `/imagens/${encodeURIComponent(a)}` : null);
 
   /* ============================== entrada =============================== */
-  const pode = (permissao, zona = "corporativa") => {
-    if (!S.eu || !S.eu.autenticado) return false;
-    const MATRIZ = {
-      administrador: ["ver", "editar_painel", "executar_acao", "aprovar_acao",
-        "cadastrar_ativo", "editar_ativo", "gerir_modulos", "gerir_credenciais",
-        "gerir_usuarios", "gerir_dicionario"],
-      engenheiro: ["ver", "editar_painel", "executar_acao", "cadastrar_ativo",
-        "editar_ativo", "gerir_modulos"],
-      operador: ["ver", "editar_painel", "executar_acao"],
-      campo: ["ver", "executar_acao"],
-      leitor: ["ver"],
-    };
-    return (S.eu.concessoes || []).some(
-      (c) => c.zonas.includes(zona) && (MATRIZ[c.papel] || []).includes(permissao));
-  };
+  /** As permissões vêm calculadas do servidor, por zona.
+   *
+   *  Havia aqui uma cópia da matriz de papéis, e cópia de regra de
+   *  autorização é cópia que sai de sincronia. Saiu: uma permissão nova ficou
+   *  de fora e o botão nasceu desabilitado sem ninguém entender por quê. A
+   *  tela não decide autorização — ela só desenha o que o servidor já decidiu,
+   *  e o servidor confere de novo a cada pedido. */
+  const pode = (permissao, zona = "corporativa") =>
+    Boolean(S.eu?.autenticado && (S.eu.permissoes?.[zona] || []).includes(permissao));
 
   function telaEntrada(recusa) {
     document.body.insertAdjacentHTML("beforeend", `
@@ -765,6 +759,34 @@
     aviso: "ambar", atencao: "ambar", informativo: "neutro", depuracao: "neutro",
   };
 
+  function cxDiagnostico(c, x) {
+    const d = x.dispositivo;
+    //: A permissão é conferida na zona DESTE equipamento, não na corporativa:
+    //: quem pode sondar o escritório não necessariamente pode sondar o nível 2.
+    const zona = d?.zona || "corporativa";
+    const podeSondar = pode("diagnosticar", zona);
+    const r = S.diagResultado;
+    const correndo = Boolean(r && r.rodando);
+    const sondas = (S.sondas || []).map((s) => `<button class="bt" data-sonda="${esc(s.nome)}"
+      title="${esc(s.descricao)}" ${podeSondar && !correndo ? "" : "disabled"}
+      >${esc(s.rotulo)}</button>`).join("");
+    const saida = r
+      ? `<div class="saida ${correndo ? "rodando" : r.ok ? "ok" : "mau"}">
+          <b>${esc(r.resumo)}</b>
+          <pre>${esc((r.linhas || []).join("\n"))}</pre>
+          ${r.duracao_s ? `<i class="nota">${r.duracao_s.toFixed(2)} s</i>` : ""}
+         </div>`
+      : `<p class="nada">escolha uma sonda — o resultado aparece aqui</p>`;
+    return `<section class="cx"><header><h2>${tit(c, "Diagnóstico")}</h2>
+      <span class="dir mono">${esc(d?.ip || "sem IP")}</span></header>
+      <div class="conteudo">
+        <div class="sondas">${sondas || `<span class="nada">nenhuma sonda</span>`}</div>
+        ${podeSondar ? "" : `<p class="aviso-inline sem-permissao">Requer a permissão
+          <b>diagnosticar</b> na zona <b>${esc(zona)}</b>.</p>`}
+        ${saida}
+      </div></section>`;
+  }
+
   function cxEventos(c) {
     const evs = S.eventos || [];
     const linhas = evs.map((e) => `<tr>
@@ -853,6 +875,7 @@
     vizinhos: (c) => cxVizinhos(c),
     grafico: (c, x, i) => cxGrafico(c, x, i),
     eventos: (c) => cxEventos(c),
+    diagnostico: (c, x) => cxDiagnostico(c, x),
     imagens: (c, x) => cxImagens(c, x),
     texto: (c, x, i) => cxTexto(c, i),
     auditoria: (c) => cxAuditoria(c),
@@ -1326,8 +1349,23 @@
       await pintarAba();
       return;
     }
+    const bs = e.target.closest("[data-sonda]");
+    if (bs && !bs.disabled && S.dispSel) {
+      const nome = bs.dataset.sonda;
+      //: Enquanto a sonda corre, o cartão fica marcado como tal — e os botões
+      //: saem do ar. Duas sondas disparadas no mesmo equipamento por engano de
+      //: clique é carga que ninguém pediu num rádio de campo.
+      S.diagResultado = { ok: true, rodando: true, resumo: `rodando ${nome}…`, linhas: [] };
+      await pintarAba();
+      S.diagResultado = await api("/api/v1/diagnostico", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sonda: nome, chave: S.dispSel, parametros: {} }),
+      }).catch((erro) => ({ ok: false, resumo: erro.message, linhas: [] }));
+      await pintarAba();
+      return;
+    }
     const dp = e.target.closest("[data-disp]");
-    if (dp) { S.dispSel = dp.dataset.disp; S.editandoTela = false;
+    if (dp) { S.dispSel = dp.dataset.disp; S.editandoTela = false; S.diagResultado = null;
               S.aba = "ativo"; marcarAba(); await pintarAba(); return; }
     if (e.target.closest("[data-voltar-ativo]")) {
       S.dispSel = null; S.editandoTela = false; await pintarAba(); return;
@@ -1457,6 +1495,7 @@
       api("/api/v1/catalogo").catch(() => []),
       api("/api/v1/metricas?com_serie=true").catch(() => []),
     ]);
+    S.sondas = await api("/api/v1/sondas").catch(() => []);
     await atualizar();
   }
 

@@ -1,4 +1,4 @@
-# Plataforma TI + OT — marcos M0 a M3 e área ADM
+# Plataforma TI + OT — marcos M0 a M3, área ADM e diagnóstico dirigido
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -771,16 +771,94 @@ tempo constante. O token de sessão entregue ao navegador **não** é o que fica
 no banco: lá fica o SHA-256 dele, então vazamento do banco entrega resumos
 inúteis, não sessões válidas.
 
+## Diagnóstico dirigido (camada 5)
+
+Os módulos de coleta perguntam a **todo mundo, sempre, do mesmo jeito**. Isso
+responde "como este rádio esteve nas últimas 24 h" e não responde "o que está
+acontecendo com ele agora, enquanto o caminhão está parado esperando".
+Diagnóstico é o outro modo: **uma pessoa, um alvo, um motivo, agora**.
+
+Quatro sondas, todas de leitura: **Ping**, **Caminho** (traceroute), **Porta
+TCP** e **Leitura SNMP**. Cada uma declara um `ManifestoSonda` com o perigo que
+representa, o limite de tempo e as zonas em que pode rodar.
+
+### O que ele recusa a fazer, e por quê
+
+Está no topo de `src/plataforma/diagnostico.py`, escrito lá para que remover a
+recusa custe apagar a justificativa:
+
+- **Varredura de faixa de portas.** Diagnóstico é testar *uma* porta. Varrer
+  faixa é reconhecimento — e num CLP ou num rádio de campo já derrubou
+  equipamento em muita mina. `SondaPorta` aceita uma porta, não um intervalo.
+- **Teste de banda.** Saturar o enlace para medir o enlace deixa a produção sem
+  rede justamente enquanto se investiga.
+- **Captura de pacotes.** Lê carga útil, e carga útil tem credencial.
+
+São ausências decididas, não pendências. O teste que as guarda existe para que
+a linha não se mova sem alguém ter de apagar um teste.
+
+### Duas recusas acontecem antes de qualquer pacote
+
+Zona proibida (`ot_nivel0/1/2`) é recusada na carga do manifesto — não é
+configuração, é impossibilidade. E sondar um alvo em outra zona a partir daqui
+não vira timeout de 15 s: vira uma frase que ensina o que falta —
+*"preciso de um agente naquela zona"*. Recusa que não explica é recusa que a
+pessoa contorna errado.
+
+### `diagnosticar` é uma permissão própria
+
+Não cabia dentro de `executar_acao`. Quem pode perguntar *"este endereço
+responde?"* não deveria por isso poder reiniciar o rádio de um caminhão em
+operação. Leitor não diagnostica; campo, operador, engenheiro e administrador
+sim — e a permissão é conferida **na zona do equipamento**, não na do usuário.
+
+Toda sonda deixa dois rastros: `auditoria` (quem, quando, em quê) e
+`diagnostico` (o resultado inteiro, para comparar com a próxima vez).
+
+### A tela desenha a autorização, não a decide
+
+`GET /api/v1/eu` devolve `permissoes` por zona, calculadas pela mesma função
+que a rota usa para aceitar ou recusar (`Usuario.pode`). Antes, `app.js`
+carregava a própria cópia da matriz de papéis — e cópia de regra de autorização
+sai de sincronia. Saiu: `diagnosticar` nasceu, o servidor passou a aceitar, e o
+botão continuou cinza sem mensagem nenhuma. A cópia foi embora; um teste barra
+o retorno dela.
+
+Isto não afrouxa nada. A tela desenha o que já foi decidido; quem decide,
+a cada pedido, continua sendo o servidor. Uma tela adulterada consegue
+habilitar o botão — não consegue fazer a rota aceitar.
+
+### O defeito que só o clique revelou
+
+O ping usa socket cru. `sock_sendto` e `sock_recvfrom` existem no asyncio
+padrão e **não existem no uvloop**, que é o laço que o uvicorn usa em produção.
+Escrito com eles, o módulo ICMP passava em toda a suíte e estourava
+`NotImplementedError` na primeira sonda disparada pela tela — quer dizer: o
+coletor mais abrangente da plataforma, o único que fala com os 708
+equipamentos, estava quebrado no processo que de fato roda.
+
+A correção troca método por prontidão: `add_reader`/`add_writer`, que os dois
+laços implementam. E o teste agora roda a sonda **nos dois laços de propósito**,
+porque a diferença entre eles era exatamente o tamanho do defeito.
+
 ## O que ainda não está aqui
 
 - Módulos de outros fabricantes: Astra/InfiNet (18 rádios PtP/PtMP), MEMS
   Michelin (46 gateways de pneu), PTX (97 IHM de bordo)
-- Gráficos e relatórios. A série histórica **não** será reimplementada aqui: o
-  Prometheus do exportador já a guarda, e duplicá-la criaria duas verdades
-  sobre o mesmo número. Falta o cartão de gráfico e o endpoint de consulta.
-- Subsistema de ação (marco M4)
-- Motor de alarmes — adiado a pedido, e ainda é a decisão certa: sem série e
-  sem grafo, um alarme só saberia dizer "não responde"
+- Backup e comparação de configuração de switches (o NCM do SolarWinds)
+- Qual porta do switch tem qual MAC (o UDT do SolarWinds)
+- Gráfico com mais de uma série sobreposta (o PerfStack do SolarWinds). Hoje
+  cada cartão desenha uma métrica; comparar duas exige dois cartões.
+- Subsistema de ação — camada 6 (marco M4). Antes de qualquer linha de código
+  aqui, uma conversa sobre o que pode ser desligado e por quem.
+- Motor de alarmes — adiado a pedido. A razão original já não vale: hoje há
+  série, grafo e eventos, então um alarme teria de que falar. O que falta é a
+  parte difícil, que nunca foi a comparação com o limiar: suprimir o alarme do
+  filho quando o pai caiu, e não acordar ninguém às 3 h por um rádio de um
+  caminhão que está na oficina.
+- **Fabricante e modelo em 0 de 708 dispositivos.** É a dívida silenciosa mais
+  cara do cadastro: sem modelo, todo perfil SNMP específico é chute, e a
+  descoberta automática não tem como se ancorar em nada.
 
 Os testes usam um banco separado (`plataforma_teste`) de propósito: as
 fixtures apagam o esquema entre casos, e uma suíte que destrói o banco de

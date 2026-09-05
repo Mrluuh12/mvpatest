@@ -44,6 +44,7 @@ class TipoCartao(StrEnum):
     VIZINHOS = "vizinhos"
     GRAFICO = "grafico"
     EVENTOS = "eventos"
+    DIAGNOSTICO = "diagnostico"
     IMAGENS = "imagens"
     TEXTO = "texto"
     ACOES = "acoes"
@@ -157,6 +158,11 @@ CATALOGO: tuple[DefCartao, ...] = (
                 ajuda="esconde o que for menos grave que isto",
             ),
         ),
+    ),
+    DefCartao(
+        tipo=TipoCartao.DIAGNOSTICO, titulo_padrao="Diagnóstico", contextos=(D,),
+        descricao="Sondas sob demanda: ping, caminho, porta TCP e leitura SNMP. "
+                  "Transforma \"está ruim\" em \"é aqui\".",
     ),
     DefCartao(
         tipo=TipoCartao.IMAGENS, titulo_padrao="Imagens", contextos=(A, D),
@@ -275,6 +281,7 @@ ARRANJO_DISPOSITIVO_PADRAO = Arranjo(
             opcoes={"metrica": "rf_snr_db", "janela": "6h"},
         ),
         Cartao(tipo=TipoCartao.VIZINHOS, largura=2),
+        Cartao(tipo=TipoCartao.DIAGNOSTICO, largura=2),
         Cartao(tipo=TipoCartao.EVENTOS, largura=4),
         Cartao(tipo=TipoCartao.TRANSICOES, largura=2),
         Cartao(tipo=TipoCartao.AUDITORIA, largura=4),
