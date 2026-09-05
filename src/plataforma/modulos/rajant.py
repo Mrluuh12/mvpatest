@@ -150,6 +150,9 @@ MANIFESTO = Manifesto(
     versao="1.0.0",
     fabricante="rajant",
     alvo=Alvo.SISTEMA,  # fala com UM sistema (o Prometheus) e cobre N ativos
+    # Este número já veio de um Prometheus. Republicá-lo no nosso /metrics
+    # criaria a segunda verdade que a arquitetura evitou de propósito.
+    serie_externa=True,
     descoberta=Descoberta.DELEGADA,
     intervalo_metricas_s=60,
     produz_metricas=tuple(dict.fromkeys(c.metrica for c in CONSULTAS)),

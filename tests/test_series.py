@@ -63,11 +63,19 @@ class TestOrigem:
     def test_disponibilidade_tem_serie_pelas_transicoes(self) -> None:
         assert series.tem_serie("ativo_alcancavel")
 
-    def test_metrica_de_snmp_nao_tem(self) -> None:
-        assert not series.tem_serie("iface_bytes_rx")
+    def test_metrica_de_snmp_passou_a_ter(self) -> None:
+        """Este teste já afirmou o contrário, e a mudança é o ponto.
 
-    def test_ausencia_explica_por_que(self) -> None:
-        s = series.sem_serie("iface_bytes_rx")
+        Enquanto só o exportador Rajant alimentava um Prometheus, tráfego de
+        porta de switch não podia virar linha. Agora a própria plataforma
+        publica o que coleta, e o que mudou não foi o dado — foi ele passar a
+        chegar a quem guarda série.
+        """
+        assert series.tem_serie("iface_bytes_rx")
+        assert series.LOCAIS["iface_bytes_rx"].taxa, "contador cru é rampa, não tráfego"
+
+    def test_metrica_que_ninguem_publica_continua_sem_serie(self) -> None:
+        s = series.sem_serie("disp_ventilador_rpm")
         assert s.tipo == "ausente"
         assert "última leitura" in s.motivo
 
@@ -191,3 +199,41 @@ class TestTransicoes:
         s = await series.de_transicoes(conexao, "nunca-visto", 3600)
         assert s.tipo == "ausente"
         assert "nunca foi sondado" in s.motivo
+
+
+class TestSeriesDaPlataforma:
+    """As métricas que a própria plataforma publica no Prometheus.
+
+    O que estes testes guardam é a honestidade da consulta: contador vira taxa,
+    agregação é declarada, e onde agregar não faria sentido a resposta é pedir
+    a dimensão em vez de inventar um número.
+    """
+
+    def test_toda_metrica_local_existe_no_dicionario(self) -> None:
+        from plataforma.dicionario import POR_NOME
+
+        fora = [m for m in series.LOCAIS if m not in POR_NOME]
+        assert not fora, f"métrica publicada fora do vocabulário: {fora}"
+
+    def test_contador_de_bytes_vira_taxa(self) -> None:
+        """Um contador de bytes desenhado cru é uma rampa que só sobe, e
+        ninguém consegue ler tráfego nela."""
+        assert series.LOCAIS["iface_bytes_rx"].taxa
+        assert series.LOCAIS["iface_bytes_rx"].unidade == "B/s"
+
+    def test_janela_da_taxa_tem_piso(self) -> None:
+        """Medido contra um Prometheus real raspando a cada 15 s: janela de
+        60 s deu 15,1 MB/s onde o tráfego era 12,5, porque extrapolou de poucas
+        amostras. A janela curta não é mais fiel, é mais barulhenta — e com
+        raspagem de 60 s ficaria vazia."""
+        assert series._janela_de_taxa(15) == series.PISO_JANELA_TAXA_S
+        assert series._janela_de_taxa(2520) == 2520 * 4
+
+    def test_estado_de_porta_pede_a_porta_em_vez_de_somar(self) -> None:
+        local = series.LOCAIS["iface_status_oper"]
+        assert local.agregacao_impossivel
+        assert "escolha uma porta" in local.agregacao_impossivel
+
+    def test_metrica_de_interface_declara_a_dimensao(self) -> None:
+        assert series.dimensao_de("iface_bytes_rx") == "porta"
+        assert series.dimensao_de("disp_cpu_pct") == ""

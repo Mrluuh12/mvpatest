@@ -168,7 +168,76 @@ deveria, ou alguém está forjando, e as duas coisas são achado.
 > mensagem dizendo ser qualquer IP. Por isso todo evento carrega `confianca`, e
 > a tela diz isso em letras miúdas: um evento não é prova, é o que alguém disse.
 
-## 6. Diagnóstico dirigido — perguntar a um equipamento agora
+## 6. Ligar a exportação para o Prometheus
+
+Sem este passo, das 61 métricas canônicas só 19 podem virar gráfico — as que
+o seu exportador Rajant já entrega ao Prometheus. Tráfego de porta de switch,
+latência e perda **existem no banco** e não chegam a quem guarda série.
+
+A plataforma não passa a guardar série: ela passa a **entregar** o número.
+
+### 6.1 Um segredo, porque nega por omissão
+
+```bash
+export PLATAFORMA_METRICAS_TOKEN="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
+echo "$PLATAFORMA_METRICAS_TOKEN"   # anote: vai no prometheus.yml
+```
+
+Sem essa variável a rota `/metrics` responde **503 e diz o que fazer** — não
+serve nada em claro por engano. Reinicie a API com ela definida.
+
+### 6.2 O job no `prometheus.yml`
+
+```yaml
+scrape_configs:
+  - job_name: plataforma
+    scrape_interval: 30s
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: "COLE_AQUI_O_TOKEN"
+    static_configs:
+      - targets: ["IP_DA_PLATAFORMA:8077"]
+```
+
+Recarregue o Prometheus e confira em **Status → Targets** que `plataforma`
+está `UP`.
+
+### 6.3 Conferir que chegou
+
+```bash
+curl -s -H "Authorization: Bearer $PLATAFORMA_METRICAS_TOKEN" \
+     http://127.0.0.1:8077/metrics | grep '^plataforma_exportador'
+```
+
+Quatro números que a exportação publica sobre si mesma:
+
+| Série | O que diz |
+|---|---|
+| `exportador_amostras` | quantas foram publicadas |
+| `exportador_omitidas_velhas` | quantas ficaram de fora por validade vencida |
+| `exportador_omitidas_externas` | quantas não são republicadas porque a série já vive noutro Prometheus |
+| `exportador_duracao_s` | quanto custou montar a resposta |
+
+**`amostras` em zero com `omitidas_velhas` alto quer dizer que o coletor
+parou**, não que o parque sumiu. É a leitura mais útil desse painel.
+
+Depois, no Prometheus, a pergunta que o dicionário canônico sempre prometeu:
+
+```promql
+sum by (funcao_negocio) (rate(plataforma_iface_bytes_rx[5m]))
+```
+
+### 6.4 O gráfico
+
+Na ficha de um switch, **Personalizar tela → Acrescentar cartão → Gráfico**, e
+escolha `iface_bytes_rx`. O cartão tem um campo **Porta**: vazio soma todas as
+portas (e diz embaixo que somou), ou escreva `Gi0/1` para uma só.
+
+`iface_status_oper` sem porta escolhida **recusa** e explica: somar códigos de
+estado de 48 portas não significaria nada.
+
+## 7. Diagnóstico dirigido — perguntar a um equipamento agora
 
 Coleta responde *"como ele esteve"*. Diagnóstico responde *"o que está
 acontecendo com ele **neste** minuto"* — e é uma pessoa que dispara, num alvo,
@@ -208,7 +277,7 @@ faixa de portas (é reconhecimento, e já derrubou CLP em mina), teste de banda
 carga útil, e carga útil tem credencial). São ausências decididas, não
 pendências.
 
-## 7. Rodar a suíte
+## 8. Rodar a suíte
 
 ```bash
 export PLATAFORMA_BANCO_TESTE="postgresql+asyncpg://USUARIO@HOST:5432/plataforma_teste"
@@ -223,12 +292,13 @@ O banco de teste é separado de propósito: as fixtures apagam o esquema entre
 os casos, e uma suíte que destrói o banco de desenvolvimento é uma suíte que
 as pessoas param de rodar.
 
-## 8. Onde olhar quando algo não bate
+## 9. Onde olhar quando algo não bate
 
 | Sintoma | Onde a resposta está |
 |---|---|
 | "por que este ativo não tem métrica?" | aba **Coleta** — saúde de cada módulo, alvos e falhas |
 | "o que a plataforma ainda não coleta?" | aba **Cobertura** — por família, com o motivo |
+| "por que este gráfico está vazio?" | a linha de procedência embaixo dele traz o PromQL exato |
 | "o cadastro está errado onde?" | aba **Cadastro** — conflitos, homônimos, divergências |
 | "quem mudou isto?" | cartão **Histórico de alterações** na ficha |
 | "quem sondou este rádio, e o que deu?" | tabela `diagnostico` e `auditoria` |
@@ -267,3 +337,10 @@ as pessoas param de rodar.
    que a rota usa para aceitar ou recusar. Se um botão novo nascer cinza sem
    motivo, é sinal de que alguém voltou a escrever a matriz de papéis na tela;
    `tests/test_contas.py::TestPermissoesNaTela` existe para barrar isso.
+9. **Coletor parado não vira linha reta.** Pare o coletor e espere cinco
+   minutos. As séries `plataforma_*` param de ser publicadas, o Prometheus as
+   marca obsoletas, e o gráfico **termina** em vez de continuar reto no último
+   valor. Verificado contra um Prometheus real: o histórico fica, o número
+   velho não. Se você vir uma reta longa depois de derrubar o coletor,
+   `PLATAFORMA_METRICAS_VALIDADE_S` está alto demais para a cadência da sua
+   coleta.

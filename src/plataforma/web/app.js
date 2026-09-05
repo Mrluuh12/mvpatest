@@ -646,11 +646,26 @@
   const fmt = (v, casas = 1) =>
     (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString("pt-BR") : v.toFixed(casas));
 
+  /** Prefixos SI para o eixo. Um switch de 10 Gb/s escreve "90.000.000" no
+   *  eixo, e ninguém lê nove dígitos de relance: lê "90 MB/s". A escolha do
+   *  prefixo é feita uma vez para o gráfico inteiro, pelo maior valor — trocar
+   *  de prefixo entre uma linha da grade e a seguinte faria o eixo mentir
+   *  sobre a proporção. */
+  const SI = [[1e9, "G"], [1e6, "M"], [1e3, "k"]];
+  function prefixo(maximo) {
+    const achado = SI.find(([n]) => Math.abs(maximo) >= n);
+    return achado ? { div: achado[0], letra: achado[1] } : { div: 1, letra: "" };
+  }
+  const fmtEixo = (v, pref) =>
+    pref.div === 1 ? fmt(v) : `${fmt(v / pref.div, 1)}${pref.letra}`;
+
   function desenhoNumerico(s) {
     const pts = s.pontos;
     if (!pts.length) return `<p class="nada">janela sem nenhum ponto</p>`;
     const t0 = pts[0][0], t1 = pts[pts.length - 1][0] || t0 + 1;
     const e = escala(Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[1])));
+    const pref = prefixo(Math.max(Math.abs(e.lo), Math.abs(e.hi)));
+    const rotuloEixo = `${pref.letra}${s.unidade || ""}`;
     const px = (ts) => G.L + ((ts - t0) / (t1 - t0 || 1)) * areaX;
     const py = (v) => G.T + areaY - ((v - e.lo) / (e.hi - e.lo || 1)) * areaY;
 
@@ -658,7 +673,8 @@
     for (let v = e.lo; v <= e.hi + 1e-9; v += e.passo) {
       grade.push(`<line class="gg" x1="${G.L}" x2="${G.W - G.R}" y1="${py(v).toFixed(1)}"
         y2="${py(v).toFixed(1)}"/>
-        <text class="ge" x="${G.L - 8}" y="${(py(v) + 4).toFixed(1)}">${esc(fmt(v))}</text>`);
+        <text class="ge" x="${G.L - 8}" y="${(py(v) + 4).toFixed(1)}"
+          >${esc(fmtEixo(v, pref))}</text>`);
     }
     const caminho = pts.map((p, i) =>
       `${i ? "L" : "M"}${px(p[0]).toFixed(1)} ${py(p[1]).toFixed(1)}`).join(" ");
@@ -666,6 +682,8 @@
     return `<svg class="graf" viewBox="0 0 ${G.W} ${G.H}" preserveAspectRatio="none"
         role="img" aria-label="${esc(s.metrica)} ao longo do tempo">
       ${grade.join("")}
+      ${rotuloEixo ? `<text class="ge un" x="${G.L - 8}" y="${G.T - 6}"
+        >${esc(rotuloEixo)}</text>` : ""}
       <text class="ge x" x="${G.L}" y="${G.H - 8}">${esc(hhmm(t0))}</text>
       <text class="ge x fim" x="${G.W - G.R}" y="${G.H - 8}">${esc(hhmm(t1))}</text>
       <path class="linha" d="${caminho}"/>
@@ -728,7 +746,8 @@
     const metrica = c.opcoes?.metrica || "rf_snr_db";
     const janela = janelaDe(c, i);
     const nome = (METRICA[metrica] || [metrica, "", 1])[0];
-    const s = (S.series || {})[`${metrica}|${janela}`];
+    const porta = c.opcoes?.porta || "";
+    const s = (S.series || {})[`${metrica}|${janela}|${porta}`];
 
     let corpo;
     if (!s) corpo = `<p class="nada">carregando…</p>`;
@@ -737,9 +756,15 @@
     else corpo = s.tipo === "estados" ? desenhoEstados(s) : desenhoNumerico(s);
 
     const nota = s && s.agregacao ? AGREGACAO[s.agregacao] : "";
+    // A unidade vai no elemento porque o balão precisa da MESMA que o eixo
+    // usou: uma métrica de contador vira taxa no servidor ("B" vira "B/s"), e
+    // a tabela do cliente não sabe disso. Duas unidades no mesmo cartão é o
+    // tipo de divergência que ninguém percebe até fazer uma conta errada.
     return `<section class="cx grafico" data-metrica="${esc(metrica)}"
+        data-unidade="${esc((s && s.unidade) || "")}"
         data-janela="${esc(janela)}" data-cartao="${i}">
-      <header><h2>${tit(c, nome)}</h2>
+      <header><h2>${tit(c, nome)}${
+        porta && !c.titulo ? ` <i class="nota">${esc(porta)}</i>` : ""}</h2>
         <span class="dir">
           ${nota ? `<i class="nota">${esc(nota)}</i>` : ""}
           ${["30m", "6h", "24h", "7d"].map((j) => `<button class="janela"
@@ -1147,11 +1172,12 @@
     const pedidos = (S.arranjo?.cartoes || [])
       .map((c, i) => [c, i])
       .filter(([c]) => c.tipo === "grafico" && c.visivel !== false)
-      .map(([c, i]) => [c.opcoes?.metrica || "rf_snr_db", janelaDe(c, i)]);
+      .map(([c, i]) => [c.opcoes?.metrica || "rf_snr_db", janelaDe(c, i),
+                        c.opcoes?.porta || ""]);
     S.series = {};
-    await Promise.all(pedidos.map(async ([m, j]) => {
-      const q = new URLSearchParams({ chave, metrica: m, janela: j });
-      S.series[`${m}|${j}`] = await api(`/api/v1/serie?${q}`)
+    await Promise.all(pedidos.map(async ([m, j, p]) => {
+      const q = new URLSearchParams({ chave, metrica: m, janela: j, porta: p });
+      S.series[`${m}|${j}|${p}`] = await api(`/api/v1/serie?${q}`)
         .catch((e) => ({ tipo: "ausente", motivo: e.message }));
     }));
   }
@@ -1463,9 +1489,11 @@
     mira.querySelector("circle").setAttribute("cy", py);
 
     const dica = cx.querySelector(".dica");
-    const un = (METRICA[cx.dataset.metrica] || ["", ""])[1];
+    const un = cx.dataset.unidade || (METRICA[cx.dataset.metrica] || ["", ""])[1];
+    const pref = prefixo(Math.abs(melhor[1]));
     dica.hidden = false;
-    dica.innerHTML = `<b>${esc(fmt(melhor[1], 2))}${un ? " " + esc(un) : ""}</b>
+    dica.innerHTML = `<b>${esc(fmtEixo(melhor[1], pref))}${
+      un ? " " + esc(pref.letra + un) : ""}</b>
       <span>${esc(diaHora(melhor[0]))}</span>`;
     dica.style.left = `${(px / G.W) * 100}%`;
   });

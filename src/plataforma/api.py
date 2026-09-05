@@ -20,11 +20,12 @@ import contextlib
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from hmac import compare_digest
 from pathlib import Path
 
-from fastapi import Cookie, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Cookie, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -40,6 +41,11 @@ VAR_BANCO = "PLATAFORMA_BANCO"
 VAR_INVENTARIO = "PLATAFORMA_INVENTARIO"
 #: Onde vive o Prometheus que o exportador alimenta — a fonte das séries.
 VAR_PROMETHEUS = "PLATAFORMA_PROMETHEUS"
+#: Segredo que o Prometheus apresenta para raspar /metrics. Sem ele a rota não
+#: serve — nega por omissão, como o resto da plataforma.
+VAR_METRICAS_TOKEN = "PLATAFORMA_METRICAS_TOKEN"
+#: Idade máxima de uma leitura publicada, em segundos.
+VAR_METRICAS_VALIDADE = "PLATAFORMA_METRICAS_VALIDADE_S"
 PADRAO_INVENTARIO = "dados/inventario.json"
 INTERVALO_RECARGA_S = 20
 
@@ -472,12 +478,22 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         return JSONResponse(jsonable_encoder(r.para_json()))
 
     @app.get("/api/v1/serie", tags=["plataforma"])
-    async def serie(chave: str, metrica: str, janela: str = "6h") -> dict:
+    async def serie(chave: str, metrica: str, janela: str = "6h", porta: str = "") -> dict:
         """A série de uma métrica de um equipamento, para o gráfico.
 
-        A plataforma não guarda série: ela pergunta para quem tem. Métrica sem
-        origem de série devolve `tipo: "ausente"` **com o motivo** — desenhar
-        uma linha de um ponto só pareceria informação.
+        A plataforma não guarda série: ela pergunta para quem tem. São três
+        lugares diferentes, e a ordem importa.
+
+        Disponibilidade vem das **transições**, que são exatas — amostrar de
+        dez em dez minutos perderia uma queda de dois minutos registrada com
+        precisão de segundo.
+
+        O que o exportador Rajant já publica vem de lá, com a mesma consulta
+        que a coleta usa, para gráfico e cartão não poderem divergir.
+
+        O resto vem do que a **própria plataforma** publica no ``/metrics``.
+        Métrica sem nenhuma dessas origens devolve `tipo: "ausente"` **com o
+        motivo** — desenhar uma linha de um ponto só pareceria informação.
         """
         from . import series
 
@@ -507,16 +523,62 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         alvo = fonte.repo.dispositivo(chave)
         if alvo is None:
             raise HTTPException(status_code=404, detail=f"dispositivo {chave!r} não existe")
-        if not alvo.ip:
-            resultado = series.sem_serie(metrica)
-            resultado.motivo = "sem IP no cadastro, não há como filtrar a série"
-            return resultado.para_json()
+
         try:
+            if metrica in series.LOCAIS:
+                # O filtro é pela chave do inventário, não pelo IP: a série é
+                # nossa e foi publicada com a chave, que não muda de dono.
+                return (
+                    await series.da_plataforma(url, metrica, chave, segundos, porta)
+                ).para_json()
+            if not alvo.ip:
+                resultado = series.sem_serie(metrica)
+                resultado.motivo = "sem IP no cadastro, não há como filtrar a série"
+                return resultado.para_json()
             return (
                 await series.de_prometheus(url, metrica, alvo.ip, segundos)
             ).para_json()
         except Exception as erro:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"Prometheus: {erro}") from erro
+
+    @app.get("/metrics", tags=["plataforma"], response_class=PlainTextResponse)
+    async def metricas_prometheus(request: Request) -> PlainTextResponse:
+        """O que a plataforma coletou, no formato que o Prometheus raspa.
+
+        A série continua tendo um dono só: o Prometheus. O que muda é que
+        agora ele recebe **tudo** — SNMP, ICMP, o que vier —, e não apenas o
+        que o exportador Rajant já lhe entregava. É o que faz tráfego de porta
+        de switch poder virar gráfico.
+
+        Fica atrás de um segredo por omissão, como toda a plataforma: sem
+        ``PLATAFORMA_METRICAS_TOKEN`` a rota não serve nada — e diz como
+        ligá-la, porque recusa que não ensina é recusa que alguém contorna
+        errado.
+        """
+        from .exportador import VALIDADE_PADRAO_S, exportar, formatar
+
+        esperado = os.environ.get(VAR_METRICAS_TOKEN, "")
+        if not esperado:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "exportação desligada: defina PLATAFORMA_METRICAS_TOKEN no "
+                    "processo da API e, no prometheus.yml, um job com "
+                    "bearer_token igual apontando para /metrics"
+                ),
+            )
+        oferecido = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        if not compare_digest(oferecido, esperado):
+            raise HTTPException(status_code=401, detail="token de raspagem inválido")
+
+        if fonte._engine is None:
+            raise HTTPException(
+                status_code=503, detail="sem banco: não há leitura para exportar"
+            )
+        validade = int(os.environ.get(VAR_METRICAS_VALIDADE, VALIDADE_PADRAO_S))
+        async with fonte._engine.connect() as conexao:
+            corpo = formatar(await exportar(conexao, validade_s=validade))
+        return PlainTextResponse(corpo, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     @app.get("/api/v1/vizinhos", tags=["inventario"])
     async def ver_vizinhos(chave: str, quando: datetime | None = None) -> list[dict]:
@@ -583,6 +645,15 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
     ABERTOS = ("/api/v1/sessao", "/api/v1/saude", "/estatico", "/imagens", "/docs",
                "/openapi.json", "/redoc")
 
+    #: Rotas com credencial **própria**, que este porteiro não sabe conferir.
+    #:
+    #: O Prometheus não tem navegador nem cookie: apresenta um token no
+    #: cabeçalho. Passar por aqui não é ficar aberto — a rota nega por omissão
+    #: (sem token configurado não serve nada) e confere o segredo ela mesma.
+    #: A comparação é de caminho exato, não de prefixo, para não abrir de
+    #: brinde qualquer rota futura que comece com as mesmas letras.
+    COM_CREDENCIAL_PROPRIA = frozenset({"/metrics"})
+
     @app.middleware("http")
     async def exigir_login(pedido, seguir):
         """A plataforma fica aberta **até existir a primeira conta**.
@@ -593,7 +664,12 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         zona, cada equipamento. É a regra que não dá para esquecer de ligar.
         """
         caminho = pedido.url.path
-        if caminho == "/" or caminho.startswith(ABERTOS) or pedido.method == "OPTIONS":
+        if (
+            caminho == "/"
+            or caminho in COM_CREDENCIAL_PROPRIA
+            or caminho.startswith(ABERTOS)
+            or pedido.method == "OPTIONS"
+        ):
             return await seguir(pedido)
         if fonte._engine is None or not await fonte.tem_contas():
             return await seguir(pedido)

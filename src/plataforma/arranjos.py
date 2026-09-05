@@ -141,6 +141,11 @@ CATALOGO: tuple[DefCartao, ...] = (
             Opcao(nome="janela", rotulo="Janela padrão", tipo=TipoOpcao.JANELA,
                   padrao="6h",
                   ajuda="quem olha pode mudar na hora; isto é só o que abre"),
+            # Métrica de interface tem uma série por porta. Vazio agrega e o
+            # cartão diz que agregou; com o nome da porta, mostra só ela.
+            Opcao(nome="porta", rotulo="Porta", tipo=TipoOpcao.TEXTO, padrao="",
+                  ajuda="só para métricas de interface: vazio soma todas as "
+                        "portas, ou escreva o nome de uma (Gi0/1)"),
         ),
     ),
     DefCartao(

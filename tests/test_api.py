@@ -160,3 +160,36 @@ class TestArranjosSemBanco:
                   "cartoes": [{"tipo": "resumo"}]},
         )
         assert r.status_code >= 400
+
+
+class TestExportacaoProm:
+    """A rota que o Prometheus raspa nega por omissão, como o resto.
+
+    E não é uma exceção ao porteiro de login: é uma credencial diferente para
+    um cliente diferente. Um raspador não tem navegador nem cookie.
+    """
+
+    def test_sem_token_configurado_nao_serve_e_ensina_a_ligar(
+        self, cliente: TestClient, monkeypatch
+    ) -> None:
+        monkeypatch.delenv("PLATAFORMA_METRICAS_TOKEN", raising=False)
+        r = cliente.get("/metrics")
+        assert r.status_code == 503
+        detalhe = r.json()["detail"]
+        assert "PLATAFORMA_METRICAS_TOKEN" in detalhe
+        assert "bearer_token" in detalhe, "a recusa diz o que pôr no prometheus.yml"
+
+    def test_token_errado_e_recusado(self, cliente: TestClient, monkeypatch) -> None:
+        monkeypatch.setenv("PLATAFORMA_METRICAS_TOKEN", "certo")
+        r = cliente.get("/metrics", headers={"Authorization": "Bearer errado"})
+        assert r.status_code == 401
+
+    def test_token_certo_passa_pelo_porteiro_de_login(
+        self, cliente: TestClient, monkeypatch
+    ) -> None:
+        """Chega até a rota — que então recusa por falta de banco, e é outra
+        recusa: prova que o cookie não era o que faltava."""
+        monkeypatch.setenv("PLATAFORMA_METRICAS_TOKEN", "certo")
+        r = cliente.get("/metrics", headers={"Authorization": "Bearer certo"})
+        assert r.status_code == 503
+        assert "banco" in r.json()["detail"]

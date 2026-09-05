@@ -1,4 +1,4 @@
-# Plataforma TI + OT — marcos M0 a M3, área ADM e diagnóstico dirigido
+# Plataforma TI + OT — marcos M0 a M3, área ADM, diagnóstico e séries
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -771,6 +771,96 @@ tempo constante. O token de sessão entregue ao navegador **não** é o que fica
 no banco: lá fica o SHA-256 dele, então vazamento do banco entrega resumos
 inúteis, não sessões válidas.
 
+## Exportação para o Prometheus — as 61 métricas viram gráfico
+
+A plataforma guarda a **última** leitura de cada métrica, não a série. Foi
+decisão, não esquecimento: o Prometheus já guarda série, e muito melhor;
+duplicá-la criaria duas verdades sobre o mesmo número.
+
+A consequência só apareceu no gráfico. Das 61 métricas canônicas, **19**
+podiam virar linha — as que passavam pelo Prometheus do exportador Rajant.
+Tráfego de porta de switch, que é o gráfico mais aberto de qualquer plataforma
+de rede, não existia. O dado estava no banco; faltava chegar a quem guarda
+série.
+
+A saída não foi guardar série aqui. Foi **entregar o número a quem guarda**: a
+rota `/metrics` publica no formato de exposição, o Prometheus raspa, e a série
+continua tendo um dono só.
+
+### O que não é publicado, e por quê
+
+**O que já veio de um Prometheus.** O módulo Rajant lê do Prometheus do
+exportador do cliente. Republicar aquilo fecharia um laço — o mesmo número
+entrando de novo com outro nome. Quem declara isso é o manifesto do módulo, no
+campo `serie_externa`, porque só ele sabe de onde leu.
+
+**Leitura velha.** Uma amostra raspada vale como se fosse de agora, e é assim
+que um coletor parado vira uma linha reta que parece saudável. Passada a
+validade (5 minutos por omissão), a leitura simplesmente não sai: o Prometheus
+marca a série obsoleta e o gráfico **termina**, que é a verdade. Verificado
+contra um Prometheus real — o histórico fica, o número velho não.
+
+Quantas ficaram de fora é publicado como métrica. Omissão silenciosa seria o
+mesmo defeito com outra roupa.
+
+### A identidade de negócio viaja com o número
+
+Cada amostra leva `ativo`, `frota`, `funcao_negocio`, `zona`, `papel`, `nome`,
+`ip`, `modulo` e `qualidade` — e `porta`, quando é uma interface. É o que faz
+a consulta que o dicionário canônico sempre prometeu finalmente responder:
+
+```promql
+sum by (funcao_negocio) (rate(plataforma_iface_bytes_rx[5m]))
+```
+
+A função de negócio passa pelo **mesmo resolvedor de precedência** que a tela
+usa, e não por um `SELECT` à parte: se a correção humana não vencesse aqui, ela
+não chegaria ao gráfico.
+
+### Disponibilidade sai daqui também, com uma ressalva escrita
+
+Alcance, latência, perda e jitter não moram em `leitura` — moram em `estado`,
+porque viram transição. Sem lê-los, o gráfico de latência continuaria
+impossível.
+
+Sobre `ativo_alcancavel` há uma ressalva, e ela vai no `HELP` da série para
+quem consulta de fora não descobrir por acidente: o registro **exato** de cada
+queda está na tabela de transições, com precisão de segundo, e é dela que saem
+o relatório e o gráfico de disponibilidade. A série publicada é *amostrada* na
+cadência da raspagem — serve para alarme e correlação, não para contar
+percentual.
+
+### O gráfico ganhou dimensão
+
+Uma métrica de interface tem uma série por porta. O cartão tem um campo
+**Porta**: vazio agrega e **diz que agregou**; com o nome de uma, mostra só
+ela. Onde agregar não significaria nada — somar códigos de estado de 48
+portas — o cartão recusa e pede a porta, em vez de desenhar um número
+inventado.
+
+Contador vira taxa: `iface_bytes_rx` desenhado cru é uma rampa que só sobe, e
+ninguém lê tráfego nela.
+
+### O que a medição contra um Prometheus real ensinou
+
+A janela do `rate()` tem piso de 4 minutos, e o número veio de medir. Com
+raspagem de 15 s, uma janela de 60 s devolveu **15,1 MB/s onde o tráfego era
+12,5** — extrapolação a partir de poucas amostras. Com 120 s, 12,95. E com
+raspagem de 60 s, uma janela de 60 s teria um ponto só: o `rate` devolveria
+vazio e o gráfico ficaria em branco sem nada explicar.
+
+Janela curta não é mais fiel, é mais barulhenta. Errar para o lado do liso
+mostra a tendência certa; errar para o lado do curto mostra um número
+inventado, ou nada.
+
+### Nega por omissão, como o resto
+
+`/metrics` sem `PLATAFORMA_METRICAS_TOKEN` definido responde **503 dizendo o
+que fazer**, inclusive o que pôr no `prometheus.yml`. Com token errado, 401.
+Passa pelo porteiro de login porque tem credencial própria — um raspador não
+tem navegador nem cookie —, e isso está escrito ao lado da lista de rotas
+abertas, para não parecer um furo.
+
 ## Diagnóstico dirigido (camada 5)
 
 Os módulos de coleta perguntam a **todo mundo, sempre, do mesmo jeito**. Isso
@@ -849,6 +939,11 @@ porque a diferença entre eles era exatamente o tamanho do defeito.
 - Qual porta do switch tem qual MAC (o UDT do SolarWinds)
 - Gráfico com mais de uma série sobreposta (o PerfStack do SolarWinds). Hoje
   cada cartão desenha uma métrica; comparar duas exige dois cartões.
+- Gráfico no ativo e na frota: o cartão só existe no contexto de dispositivo,
+  então não há como ver "o tráfego da frota CA" numa tela só.
+- Eventos marcados sobre a linha. Syslog e transições já existem em cartões
+  separados; cruzá-los é onde o valor aparece — *"o SNR caiu exatamente quando
+  o rádio registrou perda de associação"* — e hoje quem cruza é quem olha.
 - Subsistema de ação — camada 6 (marco M4). Antes de qualquer linha de código
   aqui, uma conversa sobre o que pode ser desligado e por quem.
 - Motor de alarmes — adiado a pedido. A razão original já não vale: hoje há

@@ -117,6 +117,14 @@ class Manifesto(BaseModel):
     produz_entidades: tuple[str, ...] = ()
     produz_relacoes: tuple[str, ...] = ()
 
+    #: A série desta origem já vive num banco de séries temporais?
+    #:
+    #: O módulo Rajant lê do Prometheus do exportador do cliente. Republicar
+    #: aquele número no nosso ``/metrics`` fecharia um laço: a mesma grandeza
+    #: entraria de novo com outro nome, e passariam a existir duas verdades
+    #: sobre ela. Quem declara é o módulo, porque só ele sabe de onde leu.
+    serie_externa: bool = False
+
     somente_leitura: bool = True
     zona_permitida: tuple[Zona, ...] = (Zona.CORPORATIVA,)
 
