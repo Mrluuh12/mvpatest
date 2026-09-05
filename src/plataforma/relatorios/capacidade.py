@@ -219,26 +219,21 @@ async def previsao_interfaces(
         r.resumo = "nenhuma porta caminha para saturar no horizonte de planejamento."
 
     r.notas.append(
-        "A projeção é uma reta ajustada ao período — o mesmo método do "
-        "SolarWinds, e com o mesmo defeito: um degrau isolado (uma obra, uma "
-        "mudança de rota) domina a inclinação. Leia a coluna de ajuste antes de "
-        "planejar compra em cima do número."
+        "Projeção por reta ajustada ao período: um degrau isolado domina a "
+        "inclinação. Confira a coluna de ajuste antes de usar."
     )
     if horas < HISTORICO_MINIMO_H:
         r.notas.append(
-            f"o período pedido tem {horas:.0f} h de história, menos que as "
-            f"{HISTORICO_MINIMO_H:.0f} h mínimas para uma tendência dizer algo. "
-            "Todas as projeções abaixo estão marcadas como não confiáveis."
+            f"{horas:.0f} h de história, abaixo das {HISTORICO_MINIMO_H:.0f} h mínimas "
+            "para uma tendência. Projeções marcadas como não confiáveis."
         )
     if sem_ajuste:
         r.notas.append(
-            f"{sem_ajuste} portas têm R² abaixo de {R2_CONFIAVEL}: os pontos não "
-            "descrevem uma reta, e a projeção delas não deve ser usada."
+            f"{sem_ajuste} portas com R² abaixo de {R2_CONFIAVEL} — projeção não usável."
         )
     if curtos:
         r.notas.append(
-            f"{curtos} portas ficaram de fora por terem menos de dois pontos no "
-            "período — série curta demais para qualquer tendência."
+            f"{curtos} portas fora: menos de dois pontos no período."
         )
     if len(linhas) > limite:
         r.notas.append(f"{len(linhas) - limite} portas além das {limite} mostradas.")
@@ -337,13 +332,11 @@ async def top_interfaces(
     )
     r.somar()
     r.notas.append(
-        "Médias do período, não instantâneos: uma porta que passou 900 Mb/s por "
-        "dez minutos e nada no resto do dia aparece baixa aqui. Para o pico, o "
-        "gráfico da porta na ficha do equipamento."
+        "Médias do período, não picos. O pico está no gráfico da porta, na ficha "
+        "do equipamento."
     )
     if com_erro := [x for x in linhas if x["erros_s"] > 0]:
         r.notas.append(
-            f"{len(com_erro)} portas com erro maior que zero — erro em porta "
-            "raramente é volume, quase sempre é meio físico."
+            f"{len(com_erro)} portas com erro maior que zero."
         )
     return r

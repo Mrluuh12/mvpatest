@@ -148,7 +148,10 @@ class TestCobertura:
         (linha,) = [x for x in r.linhas if x["papel"] == "radio_mesh"]
         assert linha["com_estado"] == 1
         assert linha["com_metrica"] == 0
-        assert any("vigiado, não medido" in n for n in r.notas)
+        # A ressalva encurtou; o que ela precisa manter é a distinção entre
+        # estar de pé e ter medida — é ela que decide se dá para responder
+        # "por quê" quando alguém pergunta.
+        assert any("estar de pé" in n and "medição" in n for n in r.notas)
 
 
 class TestSaida:

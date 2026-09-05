@@ -31,8 +31,7 @@ GRAVIDADE = [
 ]
 
 RESSALVA_UDP = (
-    "Syslog anda em UDP: o que não chegou não deixa rastro, nem aqui nem no "
-    "equipamento. Ausência de evento não é prova de que nada aconteceu."
+    "Syslog anda em UDP: ausência de evento não prova que nada aconteceu."
 )
 
 
@@ -90,8 +89,7 @@ async def por_severidade(
     r.notas.append(RESSALVA_UDP)
     if not linhas:
         r.notas.append(
-            "nenhum evento recebido. Confira se o receptor está no ar e se os "
-            "equipamentos apontam o syslog para o endereço da plataforma."
+            "Nenhum evento recebido no período."
         )
     return r
 
@@ -166,9 +164,7 @@ async def faladores(
     orfas = [x for x in linhas if x["equipamento"] == "não está no cadastro"]
     if orfas:
         r.notas.append(
-            f"{len(orfas)} origens mandam evento e não estão no cadastro. Ou é "
-            "equipamento que ninguém registrou, ou é IP que mudou de dono — as "
-            "duas coisas valem uma olhada."
+            f"{len(orfas)} origens fora do cadastro."
         )
     r.notas.append(RESSALVA_UDP)
     return r

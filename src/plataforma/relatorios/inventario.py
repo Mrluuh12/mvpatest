@@ -118,18 +118,16 @@ async def cobertura(
     ]
     if mudos:
         r.notas.append(
-            f"módulos sem coleta bem-sucedida registrada: {', '.join(sorted(mudos))} "
-            "— a cobertura acima não conta com eles."
+            f"Módulos sem coleta bem-sucedida: {', '.join(sorted(mudos))}."
         )
     r.notas.append(
-        "'Respondendo ou não' é saber se está de pé; 'com número além disso' é ter "
-        "medição. Um papel com estado e sem métrica está sendo vigiado, não medido."
+        "'Respondendo ou não' é estar de pé; 'com número além disso' é ter "
+        "medição."
     )
     sem_ip = total_geral - sum(com_ip.values())
     if sem_ip > 0:
         r.notas.append(
-            f"{sem_ip} dispositivos não têm IP no cadastro. Nenhum coletor os "
-            "alcança, e nenhuma cobertura vai subir enquanto isso não mudar."
+            f"{sem_ip} dispositivos sem IP no cadastro — nenhum coletor os alcança."
         )
     return r
 
@@ -197,8 +195,7 @@ async def parque(
         r.resumo = f"{total} dispositivos, {sem_modelo} deles sem modelo conhecido."
     if sem_modelo:
         r.notas.append(
-            f"{sem_modelo} de {total} dispositivos não têm modelo. É a dívida mais "
-            "cara do cadastro: sem modelo, todo perfil SNMP específico é chute e a "
-            "descoberta automática não tem em que se ancorar."
+            f"{sem_modelo} de {total} dispositivos sem modelo — perfil SNMP "
+            "específico fica inviável."
         )
     return r

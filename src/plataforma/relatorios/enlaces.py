@@ -135,19 +135,15 @@ async def qualidade(
     tortos = [x for x in linhas if (x["assimetria_db"] or 0) >= 6]
     if tortos:
         r.notas.append(
-            f"{len(tortos)} enlaces têm 6 dB ou mais de diferença entre os dois "
-            "sentidos. Assimetria assim não é ruído: costuma ser antena "
-            "desalinhada, potência desigual ou obstáculo de um lado só."
+            f"{len(tortos)} enlaces com 6 dB ou mais entre os dois sentidos."
         )
     if sem_medida:
         r.notas.append(
-            f"{sem_medida} enlaces estão abertos sem nenhuma medição — a relação "
-            "foi observada, a qualidade não. Aparecem no grafo e não nesta tabela."
+            f"{sem_medida} enlaces abertos sem medição — fora desta tabela."
         )
     r.notas.append(
-        "O enlace é dirigido de propósito: 'A para B' e 'B para A' são linhas "
-        "diferentes porque são medições diferentes. A coluna de assimetria "
-        "compara as duas."
+        "O enlace é dirigido: A→B e B→A são medições diferentes. A coluna de "
+        "assimetria compara as duas."
     )
     return r
 
@@ -218,15 +214,12 @@ async def instabilidade(
             f"{linhas[0]['trocas']} vezes."
         )
     r.notas.append(
-        "Um enlace que abre e fecha é normal numa malha móvel — o caminhão anda. "
-        "O que este relatório mostra é quem faz isso muito mais que os vizinhos, "
-        "e vale cruzar com a rota do equipamento antes de mexer em rádio."
+        "Abrir e fechar é normal numa malha móvel. O que conta aqui é quem faz "
+        "isso muito mais que os vizinhos."
     )
     r.notas.append(
-        "Fechamento só é registrado quando o módulo declara ter visto a "
-        "vizinhança inteira. Numa leitura parcial a ausência significa 'não "
-        "perguntei', e nada é fechado — por isso este número nunca infla numa "
-        "queda do coletor."
+        "Fechamento só conta quando o módulo declara ter visto a vizinhança "
+        "inteira; numa leitura parcial, nada é fechado."
     )
     return r
 

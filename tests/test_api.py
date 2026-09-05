@@ -112,7 +112,8 @@ class TestShell:
     def test_raiz_entrega_o_shell(self, cliente: TestClient) -> None:
         resposta = cliente.get("/")
         assert resposta.status_code == 200
-        assert "FROTA MINA" in resposta.text
+        assert "AMPS" in resposta.text
+        assert "anglo-american.png" in resposta.text, "a marca fica no cabeçalho"
 
     def test_estaticos_existem(self, cliente: TestClient) -> None:
         for arquivo in ("app.css", "app.js"):
@@ -122,6 +123,10 @@ class TestShell:
         """Console limpo importa numa ferramenta que fica aberta o dia todo."""
         html = cliente.get("/").text
         assert 'rel="icon"' in html, "sem favicon, todo carregamento gera um 404"
+        for arquivo in ("anglo-american.png", "anglo-marca.png"):
+            assert (
+                cliente.get(f"/estatico/{arquivo}").status_code == 200
+            ), f"{arquivo} referenciado e ausente daria 404 em toda visita"
 
 
 class TestArranjosSemBanco:

@@ -426,6 +426,52 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         async with fonte._engine.connect() as conexao:
             return await ultimos(conexao, sujeito, severidade_minima, limite)
 
+    # ------------------------------- rede -------------------------------
+
+    @app.get("/api/v1/rede/resumo", tags=["rede"])
+    async def rede_resumo() -> dict:
+        """Os números do topo: rádios, enlaces, qualidade e vizinhança."""
+        from . import rede
+
+        if fonte._engine is None:
+            raise HTTPException(status_code=503, detail="sem banco configurado")
+        async with fonte._engine.connect() as conexao:
+            return jsonable_encoder(await rede.resumo(conexao))
+
+    @app.get("/api/v1/rede/enlaces", tags=["rede"])
+    async def rede_enlaces(classe: str = "", so_ruins: bool = False) -> list[dict]:
+        """Um registro por par de rádios, com ida e volta lado a lado."""
+        from . import rede
+
+        if fonte._engine is None:
+            raise HTTPException(status_code=503, detail="sem banco configurado")
+        async with fonte._engine.connect() as conexao:
+            saida = await rede.enlaces(conexao)
+        if classe:
+            saida = [e for e in saida if e["classe"] == classe]
+        if so_ruins:
+            saida = [e for e in saida if e["cor"] == "mau"]
+        return jsonable_encoder(saida)
+
+    @app.get("/api/v1/rede/radios", tags=["rede"])
+    async def rede_radios() -> list[dict]:
+        from . import rede
+
+        if fonte._engine is None:
+            raise HTTPException(status_code=503, detail="sem banco configurado")
+        async with fonte._engine.connect() as conexao:
+            return jsonable_encoder(await rede.radios(conexao))
+
+    @app.get("/api/v1/rede/mapa", tags=["rede"])
+    async def rede_mapa() -> dict:
+        """Rádios em coordenada de terreno, com os enlaces entre eles."""
+        from . import rede
+
+        if fonte._engine is None:
+            raise HTTPException(status_code=503, detail="sem banco configurado")
+        async with fonte._engine.connect() as conexao:
+            return jsonable_encoder(await rede.mapa(conexao))
+
     @app.get("/api/v1/relatorios", tags=["relatorios"])
     async def listar_relatorios() -> list[dict]:
         """O catálogo, agrupado por pergunta e com os parâmetros de cada um.

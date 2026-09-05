@@ -272,7 +272,39 @@ com as fontes de quem imprime.
 3. **Ressalva no CSV.** Baixe qualquer um e abra num editor de texto: as linhas
    `# ressalva:` têm de estar lá. Se sumirem, o número passa a viajar sozinho.
 
-## 8. Diagnóstico dirigido — perguntar a um equipamento agora
+## 8. Seção Rede
+
+Aba **Rede**. Quatro vistas sobre a malha: **Mapa**, **Enlaces**, **Rádios** e
+**Ponto a ponto**.
+
+### 8.1 O que conferir no mapa
+
+1. **Escala.** A barra no canto inferior mostra a distância real. Se a
+   proporção parecer esticada na horizontal, a correção de longitude quebrou.
+2. **Posição vencida.** Pare o coletor por quinze minutos. Os rádios passam a
+   ser desenhados em contorno e o rodapé conta quantos. Posição velha desenhada
+   como atual é a pior mentira que um mapa pode contar.
+3. **Distância contra sinal.** Baixe `/api/v1/rede/enlaces` e correlacione
+   `distancia_m` com `rssi_pior_dbm`. **Tem de haver correlação negativa** —
+   sinal cai com distância. Perto de zero significa que o pareamento de
+   identidade está juntando rádios errados, ou que a origem do GPS não é real.
+
+### 8.2 Enlaces e ponto a ponto
+
+A tabela de enlaces traz **SNR ida** e **SNR volta** em colunas separadas, e a
+diferença entre elas em **Δ dB**. Seis ou mais costuma ser antena desalinhada.
+
+Em **Ponto a ponto** ficam só os enlaces entre infraestrutura fixa — a espinha
+dorsal. Um cartão por enlace, com os dois sentidos abertos.
+
+### 8.3 Os dois números do rodapé que importam
+
+| Rodapé | O que quer dizer |
+|---|---|
+| *"N enlaces apontam para um vizinho que o cadastro não conhece"* | o rádio vê alguém que a planilha não tem |
+| *"N enlaces com um sentido só medido"* | normal em pouca quantidade; em volume, a resolução de identidade está perdendo o par de volta |
+
+## 9. Diagnóstico dirigido — perguntar a um equipamento agora
 
 Coleta responde *"como ele esteve"*. Diagnóstico responde *"o que está
 acontecendo com ele **neste** minuto"* — e é uma pessoa que dispara, num alvo,
@@ -312,7 +344,7 @@ faixa de portas (é reconhecimento, e já derrubou CLP em mina), teste de banda
 carga útil, e carga útil tem credencial). São ausências decididas, não
 pendências.
 
-## 9. Rodar a suíte
+## 10. Rodar a suíte
 
 ```bash
 export PLATAFORMA_BANCO_TESTE="postgresql+asyncpg://USUARIO@HOST:5432/plataforma_teste"
@@ -327,7 +359,7 @@ O banco de teste é separado de propósito: as fixtures apagam o esquema entre
 os casos, e uma suíte que destrói o banco de desenvolvimento é uma suíte que
 as pessoas param de rodar.
 
-## 10. Onde olhar quando algo não bate
+## 11. Onde olhar quando algo não bate
 
 | Sintoma | Onde a resposta está |
 |---|---|
@@ -339,6 +371,8 @@ as pessoas param de rodar.
 | "quem sondou este rádio, e o que deu?" | Relatórios → **Diagnósticos** |
 | "quanto a frota ficou parada mês passado?" | Relatórios → **Por frota**, janela 30d |
 | "esta porta vai saturar?" | Relatórios → **Saturação prevista** |
+| "qual enlace da malha está ruim?" | Rede → **Mapa**, filtro *só problemas* |
+| "a espinha dorsal está boa?" | Rede → **Ponto a ponto** |
 
 ## Verificações que valem fazer no primeiro dia
 

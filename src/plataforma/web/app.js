@@ -89,6 +89,7 @@
     fichas: new Map(), abertos: new Set(["FROTA"]),
     arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {}, eventos: [], janela: {}, metricas: [], sondas: [], diagResultado: null,
     relSel: null, relJanela: "7d", relLista: null, relParams: {},
+    rede: null, redeAba: "mapa", redeSel: null, redeFiltro: "tudo",
   };
 
   /* três situações distintas, nunca duas */
@@ -1149,6 +1150,348 @@
     "aberto agora": "verde", fechado: "neutro",
   };
 
+
+  /* ------------------------------- rede -------------------------------- */
+
+  //: Faixas de RSSI iguais às do servidor. Duplicar aqui seria a mesma cópia
+  //: que a matriz de permissões era; por isso a cor vem calculada na resposta
+  //: e esta tabela só traduz a classe em pintura.
+  const COR_ENLACE = { ok: "var(--verde)", atencao: "var(--ambar)",
+                       mau: "var(--vermelho)", nd: "var(--linha-forte)" };
+  const ABAS_REDE = [
+    ["mapa", "Mapa"], ["enlaces", "Enlaces"], ["radios", "Rádios"],
+    ["ptp", "Ponto a ponto"],
+  ];
+  const CLASSE_ENLACE = {
+    espinha: "espinha dorsal", distribuicao: "distribuição", lavra: "frente de lavra",
+  };
+
+  const MAPA = { W: 980, H: 560, P: 26 };
+
+  /** Filtros do mapa. Com 141 rádios e 545 enlaces, "mostrar tudo" é um
+   *  emaranhado — e emaranhado não é informação. O padrão mostra tudo com o
+   *  enlace bom apagado, de modo que o vermelho salte; os outros recortes
+   *  existem para quando a pergunta é específica. */
+  const FILTROS_MAPA = [
+    ["tudo", "Tudo"],
+    ["problema", "Só problemas"],
+    ["infra", "Só infraestrutura"],
+  ];
+  const passaFiltro = (l, f) =>
+    f === "problema" ? l.cor === "mau" || l.cor === "atencao"
+      : f === "infra" ? l.classe !== "lavra"
+      : true;
+
+  function escalaDoMapa(d) {
+    const k = Math.min((MAPA.W - 2 * MAPA.P) / (d.largura_m || 1),
+                       (MAPA.H - 2 * MAPA.P) / (d.altura_m || 1));
+    return {
+      k,
+      px: (x) => MAPA.P + x * k,
+      py: (y) => MAPA.P + y * k,
+    };
+  }
+
+  /** Barra de escala com um número redondo. Mapa sem escala vira diagrama, e
+   *  em diagrama ninguém sabe se o vizinho ruim está a 200 m ou a 4 km. */
+  function barraDeEscala(k) {
+    const alvo = 150 / k;
+    const passo = [50, 100, 200, 500, 1000, 2000, 5000].find((v) => v >= alvo) || 10000;
+    const larg = passo * k;
+    const y = MAPA.H - 16;
+    return `<g class="escala">
+      <line x1="${MAPA.P}" x2="${MAPA.P + larg}" y1="${y}" y2="${y}"/>
+      <line x1="${MAPA.P}" x2="${MAPA.P}" y1="${y - 4}" y2="${y + 4}"/>
+      <line x1="${MAPA.P + larg}" x2="${MAPA.P + larg}" y1="${y - 4}" y2="${y + 4}"/>
+      <text x="${MAPA.P + larg / 2}" y="${y - 7}">${
+        passo >= 1000 ? `${passo / 1000} km` : `${passo} m`}</text></g>`;
+  }
+
+  function desenhoMapa(d) {
+    if (!d.nos.length) return `<p class="nada">nenhum rádio publica coordenada</p>`;
+    const e = escalaDoMapa(d);
+    const sel = S.redeSel;
+
+    const filtro = S.redeFiltro || "tudo";
+    const visiveis = d.enlaces.filter((l) => passaFiltro(l, filtro));
+    const linhas = visiveis.map((l) => {
+      const aceso = sel && (l.a === sel || l.b === sel);
+      return `<line class="el q-${l.cor} ${aceso ? "aceso" : ""}"
+        x1="${e.px(l.ax).toFixed(1)}" y1="${e.py(l.ay).toFixed(1)}"
+        x2="${e.px(l.bx).toFixed(1)}" y2="${e.py(l.by).toFixed(1)}"
+        stroke="${COR_ENLACE[l.cor]}"><title>${esc(l.nome_a)} ↔ ${esc(l.nome_b)}
+        · ${esc(l.qualidade)}${l.rssi_pior_dbm !== null
+          ? ` · ${l.rssi_pior_dbm} dBm` : ""}${l.distancia_m !== null
+          ? ` · ${l.distancia_m} m` : ""}</title></line>`;
+    }).join("");
+
+    const nos = d.nos.map((n) => {
+      const cls = n.alcancavel === null ? "nd"
+        : (n.incerto ? "incerto" : (n.alcancavel ? "ok" : "mau"));
+      //: Posição vencida some do desenho e vira contorno: mostrar o caminhão
+      //: onde ele estava há três horas é pior que não mostrar.
+      const venc = n.posicao_vencida ? " vencido" : "";
+      const r = n.classe === "fixo" ? 7 : (n.classe === "semifixo" ? 6 : 4.5);
+      const forma = n.classe === "movel"
+        ? `<circle r="${r}"/>`
+        : `<rect x="${-r}" y="${-r}" width="${2 * r}" height="${2 * r}" rx="1.5"/>`;
+      return `<g class="no e-${cls}${venc} ${n.chave === sel ? "sel" : ""}"
+        data-radio="${esc(n.chave)}"
+        transform="translate(${e.px(n.x_m).toFixed(1)},${e.py(n.y_m).toFixed(1)})">
+        <circle class="alvo" r="11"/>${forma}<title>${esc(n.nome)} · ${esc(n.frota)} · ${n.vizinhos} vizinhos${
+          n.pior_rssi_dbm !== null ? ` · pior ${n.pior_rssi_dbm} dBm` : ""}</title></g>`;
+    }).join("");
+
+    // Rótulo só na infraestrutura: 141 nomes sobrepostos não se leem.
+    const rotulos = d.nos.filter((n) => n.classe !== "movel").map((n) =>
+      `<text class="rot" x="${(e.px(n.x_m) + 9).toFixed(1)}"
+        y="${(e.py(n.y_m) + 3.5).toFixed(1)}">${esc(n.ativo || n.nome)}</text>`).join("");
+
+    return `<svg class="mapa-rede" viewBox="0 0 ${MAPA.W} ${MAPA.H}"
+        role="img" aria-label="Posição dos rádios e enlaces">
+      <g class="els">${linhas}</g><g class="nos">${nos}</g>
+      <g class="rots">${rotulos}</g>${barraDeEscala(e.k)}
+      <text class="conta" x="${MAPA.W - MAPA.P}" y="${MAPA.H - 14}"
+        >${visiveis.length} de ${d.enlaces.length} enlaces</text></svg>`;
+  }
+
+  const cxKpi = (rot, val, sub, cls) => `<div class="kpi ${cls || ""}">
+    <span class="rot">${esc(rot)}</span><b>${esc(val)}</b>
+    ${sub ? `<span class="sub">${esc(sub)}</span>` : ""}</div>`;
+
+  function kpisDaRede(r) {
+    const pct = (a, b) => (b ? `${((100 * a) / b).toFixed(1)}%` : "—");
+    return `<div class="kpis">
+      ${cxKpi("Rádios no ar", `${r.radios_online} / ${r.radios_total}`,
+              pct(r.radios_online, r.radios_total))}
+      ${cxKpi("Enlaces abertos", r.enlaces_abertos,
+              `${r.enlaces_medidos} com medida`)}
+      ${cxKpi("Sinal mediano", r.rssi_mediano_dbm !== null
+              ? `${r.rssi_mediano_dbm} dBm` : "—",
+              r.rssi_p10_dbm !== null ? `10% abaixo de ${r.rssi_p10_dbm}` : "")}
+      ${cxKpi("Taxa mediana", r.capacidade_mediana_mbps !== null
+              ? `${r.capacidade_mediana_mbps} Mbps` : "—", `SNR ${r.snr_mediano_db} dB`)}
+      ${cxKpi("Vizinhos por rádio", r.vizinhos_media ?? "—",
+              `${r.vizinhos_min}–${r.vizinhos_max}`)}
+      ${cxKpi("Enlaces ruins", r.enlaces_ruins,
+              "abaixo de −85 dBm", r.enlaces_ruins ? "alerta" : "")}
+    </div>`;
+  }
+
+  function tabelaEnlaces(lista) {
+    if (!lista.length) return `<p class="nada">nenhum enlace</p>`;
+    const linhas = lista.map((l) => `<tr class="clicavel" data-radio="${esc(l.a)}">
+      <td>${esc(l.nome_a)}</td><td>${esc(l.nome_b)}</td>
+      <td><span class="selo liso">${esc(CLASSE_ENLACE[l.classe] || l.classe)}</span></td>
+      <td class="mono num">${l.snr_ida_db ?? "—"}</td>
+      <td class="mono num">${l.snr_volta_db ?? "—"}</td>
+      <td class="mono num ${(l.assimetria_db ?? 0) >= 6 ? "aviso" : ""}"
+        >${l.assimetria_db ?? "—"}</td>
+      <td class="mono num">${l.rssi_pior_dbm ?? "—"}</td>
+      <td class="mono num">${l.capacidade_mbps ?? "—"}</td>
+      <td class="mono num">${l.distancia_m ?? "—"}</td>
+      <td><span class="selo ${l.cor === "ok" ? "verde"
+        : l.cor === "atencao" ? "ambar" : l.cor === "mau" ? "vermelho" : "neutro"}"
+        >${esc(l.qualidade)}</span></td>
+    </tr>`).join("");
+    return `<div class="rol"><table>
+      <thead><tr><th>De</th><th>Para</th><th>Classe</th>
+        <th class="num">SNR ida</th><th class="num">SNR volta</th>
+        <th class="num">Δ dB</th><th class="num">Sinal</th>
+        <th class="num">Mbps</th><th class="num">Metros</th><th>Estado</th></tr></thead>
+      <tbody>${linhas}</tbody></table></div>`;
+  }
+
+  function tabelaRadios(lista) {
+    const linhas = lista.map((r) => `<tr class="clicavel" data-radio="${esc(r.chave)}">
+      <td>${esc(r.nome)}</td><td>${esc(r.ativo)}</td>
+      <td><span class="selo liso">${esc(r.classe)}</span></td>
+      <td class="mono">${esc(r.ip || "—")}</td>
+      <td class="mono num">${r.vizinhos}</td>
+      <td class="mono num">${r.pior_rssi_dbm ?? "—"}</td>
+      <td class="mono num">${r.melhor_rssi_dbm ?? "—"}</td>
+      <td class="mono num">${r.ruido_dbm ?? "—"}</td>
+      <td class="mono num">${r.potencia_tx_dbm ?? "—"}</td>
+      <td class="mono num">${r.clientes ?? "—"}</td>
+      <td class="mono num">${r.temperatura_c ?? "—"}</td>
+      <td class="mono num">${r.velocidade_kmh ?? "—"}</td>
+    </tr>`).join("");
+    return `<div class="rol"><table>
+      <thead><tr><th>Rádio</th><th>Ativo</th><th>Tipo</th><th>IP</th>
+        <th class="num">Viz.</th><th class="num">Pior</th><th class="num">Melhor</th>
+        <th class="num">Ruído</th><th class="num">TX</th><th class="num">Clientes</th>
+        <th class="num">°C</th><th class="num">km/h</th></tr></thead>
+      <tbody>${linhas}</tbody></table></div>`;
+  }
+
+  /** Ponto a ponto: os enlaces entre infraestrutura fixa.
+   *
+   *  É a espinha dorsal — se um destes cai, um pedaço da mina inteira perde
+   *  rede, não um caminhão. Merece cartão por enlace em vez de linha de
+   *  tabela, com os dois sentidos abertos. */
+  function painelPtp(lista) {
+    const fixos = lista.filter((l) => l.classe !== "lavra");
+    if (!fixos.length) {
+      return `<p class="nada">nenhum enlace entre infraestrutura fixa neste momento</p>`;
+    }
+    const cartoes = fixos.map((l) => {
+      const lado = (rot, snr, rssi) => `<div class="sentido">
+        <span class="rot">${esc(rot)}</span>
+        <div class="par"><b>${snr ?? "—"}</b><span>dB SNR</span></div>
+        <div class="par"><b>${rssi ?? "—"}</b><span>dBm</span></div></div>`;
+      return `<article class="cx ptp" data-radio="${esc(l.a)}">
+        <header><h2>${esc(l.nome_a)} ↔ ${esc(l.nome_b)}</h2>
+          <span class="dir"><span class="selo ${l.cor === "ok" ? "verde"
+            : l.cor === "atencao" ? "ambar" : "vermelho"}">${esc(l.qualidade)}</span>
+          </span></header>
+        <div class="conteudo">
+          <div class="sentidos">
+            ${lado(`${l.nome_a} → ${l.nome_b}`, l.snr_ida_db, l.rssi_ida_dbm)}
+            ${lado(`${l.nome_b} → ${l.nome_a}`, l.snr_volta_db, l.rssi_volta_dbm)}
+          </div>
+          <dl class="pares">
+            <dt>Classe</dt><dd>${esc(CLASSE_ENLACE[l.classe] || l.classe)}</dd>
+            <dt>Distância</dt><dd>${l.distancia_m !== null
+              ? `${l.distancia_m} m` : "—"}</dd>
+            <dt>Taxa estimada</dt><dd>${l.capacidade_mbps ?? "—"} Mbps</dd>
+            <dt>Custo</dt><dd>${l.custo ?? "—"}</dd>
+            <dt>Assimetria</dt><dd class="${(l.assimetria_db ?? 0) >= 6 ? "aviso" : ""}"
+              >${l.assimetria_db !== null ? `${l.assimetria_db} dB` : "—"}</dd>
+            <dt>Aberto desde</dt><dd>${l.desde ? esc(diaHora(
+              new Date(l.desde).getTime() / 1000)) : "—"}</dd>
+          </dl>
+        </div></article>`;
+    }).join("");
+    return `<div class="grade-ptp">${cartoes}</div>`;
+  }
+
+  function painelRadio(chave) {
+    const r = (S.rede.radios || []).find((x) => x.chave === chave);
+    if (!r) return "";
+    const meus = (S.rede.enlaces || []).filter((l) => l.a === chave || l.b === chave);
+    const linha = (rot, v, un) => `<dt>${esc(rot)}</dt><dd>${
+      v === null || v === undefined ? "—" : `${v}${un ? ` ${un}` : ""}`}</dd>`;
+    const viz = meus.slice(0, 12).map((l) => {
+      const outro = l.a === chave ? l.nome_b : l.nome_a;
+      return `<tr><td>${esc(outro)}</td>
+        <td class="mono num">${l.rssi_pior_dbm ?? "—"}</td>
+        <td class="mono num">${l.capacidade_mbps ?? "—"}</td>
+        <td><span class="selo liso ${l.cor === "ok" ? "verde"
+          : l.cor === "atencao" ? "ambar" : "vermelho"}">${esc(l.qualidade)}</span></td>
+      </tr>`;
+    }).join("");
+    return `<aside class="cx painel-radio">
+      <header><h2>${esc(r.nome)}</h2>
+        <button class="bt" data-fechar-radio>Fechar</button></header>
+      <div class="conteudo">
+        <dl class="pares">
+          ${linha("Ativo", r.ativo || "—")}${linha("Frota", r.frota)}
+          ${linha("Tipo", r.classe)}${linha("Endereço", r.ip || "—")}
+          ${linha("Vizinhos", r.vizinhos)}
+          ${linha("Declarados pelo rádio", r.vizinhos_declarados)}
+          ${linha("Pior sinal", r.pior_rssi_dbm, "dBm")}
+          ${linha("Melhor sinal", r.melhor_rssi_dbm, "dBm")}
+          ${linha("Ruído", r.ruido_dbm, "dBm")}
+          ${linha("Potência TX", r.potencia_tx_dbm, "dBm")}
+          ${linha("Clientes", r.clientes)}
+          ${linha("Temperatura", r.temperatura_c, "°C")}
+          ${linha("CPU", r.cpu_pct, "%")}${linha("Bateria", r.bateria_pct, "%")}
+          ${linha("Velocidade", r.velocidade_kmh, "km/h")}
+          ${linha("Altitude", r.altitude_m, "m")}
+          ${linha("Resposta", r.resposta_ms, "ms")}
+        </dl>
+        <h3 class="sub-titulo">Vizinhança</h3>
+        <div class="rol"><table><thead><tr><th>Vizinho</th>
+          <th class="num">Sinal</th><th class="num">Mbps</th><th>Estado</th>
+        </tr></thead><tbody>${viz}</tbody></table></div>
+        ${meus.length > 12
+          ? `<p class="nota-rede">${meus.length - 12} vizinhos além dos mostrados.</p>`
+          : ""}
+      </div></aside>`;
+  }
+
+  async function pintarRede() {
+    if (!S.rede) {
+      $("centro").innerHTML = `<div class="grade g1"><section class="cx">
+        <div class="conteudo"><p class="nada">carregando a rede…</p></div>
+      </section></div>`;
+      const [resumo, enlaces, radios, mapa] = await Promise.all([
+        api("/api/v1/rede/resumo").catch(() => null),
+        api("/api/v1/rede/enlaces").catch(() => []),
+        api("/api/v1/rede/radios").catch(() => []),
+        api("/api/v1/rede/mapa").catch(() => ({ nos: [], enlaces: [] })),
+      ]);
+      S.rede = { resumo, enlaces, radios, mapa };
+    }
+    const { resumo, enlaces, radios, mapa } = S.rede;
+    if (!resumo) {
+      return ($("centro").innerHTML =
+        `<p class="nada">a seção de rede precisa do banco</p>`);
+    }
+    const aba = S.redeAba || "mapa";
+    const abas = ABAS_REDE.map(([k, r]) => `<button class="bt ${k === aba ? "cheio" : ""}"
+      data-rede-aba="${k}">${esc(r)}</button>`).join("");
+
+    let corpo;
+    if (aba === "mapa") {
+      const fbotoes = FILTROS_MAPA.map(([k, r]) => `<button class="bt pequeno
+        ${k === (S.redeFiltro || "tudo") ? "cheio" : ""}"
+        data-rede-filtro="${k}">${esc(r)}</button>`).join("");
+      corpo = `<div class="mapa-caixa">
+        <div class="filtros-mapa">${fbotoes}</div>
+        ${desenhoMapa(mapa)}
+        <div class="legenda-mapa">
+          <span><i class="tr fixo"></i>infraestrutura</span>
+          <span><i class="tr semifixo"></i>estação móvel</span>
+          <span><i class="cr"></i>veículo</span>
+          <span><i class="cr venc"></i>posição vencida</span>
+          <span><i class="ln ok"></i>até −75 dBm</span>
+          <span><i class="ln atencao"></i>−75 a −85</span>
+          <span><i class="ln mau"></i>abaixo de −85</span>
+        </div></div>`;
+    } else if (aba === "enlaces") {
+      corpo = tabelaEnlaces(enlaces);
+    } else if (aba === "radios") {
+      corpo = tabelaRadios(radios);
+    } else {
+      corpo = painelPtp(enlaces);
+    }
+
+    const notas = [];
+    if (mapa.sem_gps) notas.push(`${mapa.sem_gps} rádios sem coordenada — fora do mapa.`);
+    if (mapa.posicoes_vencidas) {
+      notas.push(`${mapa.posicoes_vencidas} posições com mais de `
+        + `${Math.round(mapa.vence_em_s / 60)} min — desenhadas em contorno.`);
+    }
+    if (resumo.enlaces_vizinho_fora_do_cadastro) {
+      notas.push(`${resumo.enlaces_vizinho_fora_do_cadastro} enlaces apontam para um `
+        + `vizinho que o cadastro não conhece.`);
+    }
+    if (resumo.enlaces_abertos - resumo.enlaces_bidirecionais > 0) {
+      notas.push(`${resumo.enlaces_abertos - resumo.enlaces_bidirecionais} enlaces com `
+        + `um sentido só medido.`);
+    }
+    if (resumo.enlaces_assimetricos) {
+      notas.push(`${resumo.enlaces_assimetricos} com 6 dB ou mais de diferença entre `
+        + `os sentidos.`);
+    }
+    if (resumo.radios_incertos) {
+      notas.push(`${resumo.radios_incertos} rádios com estado incerto.`);
+    }
+
+    $("centro").innerHTML = `<div class="rede ${S.redeSel ? "com-painel" : ""}">
+      <div class="col-rede">
+        ${kpisDaRede(resumo)}
+        <section class="cx">
+          <header><h2>Malha</h2><span class="dir">${abas}</span></header>
+          <div class="conteudo ${aba === "mapa" ? "" : "rente"}">${corpo}</div>
+          ${notas.length ? `<div class="notas-rede">${
+            notas.map((n) => `<span>${esc(n)}</span>`).join("")}</div>` : ""}
+        </section>
+      </div>
+      ${S.redeSel ? painelRadio(S.redeSel) : ""}</div>`;
+  }
+
   const pintarCobertura = () => {
     const linhas = S.sinais.map((s) => `<tr><td class="mono">${esc(s.familia)}</td>
       <td>${s.disponivel ? `<span class="selo verde">coletando</span>`
@@ -1333,6 +1676,7 @@
 
   async function pintarAba() {
     if (S.aba === "coleta") return $("centro").innerHTML = `<div class="grade g1">${cxColeta()}</div>`;
+    if (S.aba === "rede") return pintarRede();
     if (S.aba === "cobertura") return pintarCobertura();
     if (S.aba === "relatorios") return pintarRelatorios();
     if (S.aba === "cadastro") return pintarCadastro();
@@ -1482,6 +1826,15 @@
     }
     const brj = e.target.closest("[data-rel-janela]");
     if (brj) { S.relJanela = brj.dataset.relJanela; await pintarRelatorios(); return; }
+    const ra = e.target.closest("[data-rede-aba]");
+    if (ra) { S.redeAba = ra.dataset.redeAba; await pintarRede(); return; }
+    const rf = e.target.closest("[data-rede-filtro]");
+    if (rf) { S.redeFiltro = rf.dataset.redeFiltro; await pintarRede(); return; }
+    const rr = e.target.closest("[data-radio]");
+    if (rr) { S.redeSel = rr.dataset.radio; await pintarRede(); return; }
+    if (e.target.closest("[data-fechar-radio]")) {
+      S.redeSel = null; await pintarRede(); return;
+    }
     if (e.target.closest("[data-rel-aplicar]")) {
       S.relParams = {};
       document.querySelectorAll("[data-relparam]").forEach((el) => {

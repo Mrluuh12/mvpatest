@@ -57,31 +57,28 @@ RELATORIOS: dict[str, Definicao] = {
     # ------------------------------ disponibilidade
     "disponibilidade_frota": Definicao(
         "Por frota",
-        'Troca "3 nós down" por "a britagem primária está a 87%".',
+        "Média e pior por frota e função de negócio.",
         Categoria.DISPONIBILIDADE,
         disponibilidade.por_frota,
         (P_FROTA, P_ZONA),
     ),
     "disponibilidade_dia": Definicao(
         "Dia a dia",
-        "A linha do tempo que a média do mês esconde: 97% pode ser trinta dias "
-        "iguais ou vinte e nove ótimos e um péssimo.",
+        "Disponibilidade de cada dia do período.",
         Categoria.DISPONIBILIDADE,
         disponibilidade.por_dia,
         (P_FROTA, P_ZONA),
     ),
     "piores_disponibilidades": Definicao(
         "Piores equipamentos",
-        "Ordenado por tempo fora do ar, não por percentual — 90% em um dia e "
-        "90% em um mês são problemas de tamanhos diferentes.",
+        "Equipamentos com mais tempo fora do ar.",
         Categoria.DISPONIBILIDADE,
         disponibilidade.piores,
         (P_LIMITE, P_FROTA, P_ZONA),
     ),
     "quedas": Definicao(
         "Quedas, uma a uma",
-        "Cada queda com início, fim e duração. O relatório que se abre depois "
-        "de um turno ruim.",
+        "Cada queda com início, fim e duração.",
         Categoria.DISPONIBILIDADE,
         disponibilidade.quedas,
         (P_FROTA, P_ZONA, P_MINIMO),
@@ -89,8 +86,7 @@ RELATORIOS: dict[str, Definicao] = {
     # ------------------------------ capacidade
     "previsao_interfaces": Definicao(
         "Saturação prevista",
-        "Em quantos dias cada porta cruza o limiar, no ritmo atual — com o "
-        "tamanho do histórico e a qualidade do ajuste ao lado do número.",
+        "Dias até o limiar de utilização, com a confiança da projeção.",
         Categoria.CAPACIDADE,
         capacidade.previsao_interfaces,
         (
@@ -104,8 +100,7 @@ RELATORIOS: dict[str, Definicao] = {
     ),
     "top_interfaces": Definicao(
         "Tráfego por porta",
-        "Entrada, saída, erros e descartes na mesma linha: porta cheia é "
-        "capacidade, porta que erra é cabo.",
+        "Entrada, saída, erros e descartes por porta.",
         Categoria.CAPACIDADE,
         capacidade.top_interfaces,
         (
@@ -119,8 +114,7 @@ RELATORIOS: dict[str, Definicao] = {
     # ------------------------------ enlaces
     "enlaces_qualidade": Definicao(
         "Enlaces: qualidade",
-        "Cada enlace aberto com SNR, sinal e capacidade — e a assimetria entre "
-        "os dois sentidos, que é a coluna que faz alguém subir na torre.",
+        "SNR, sinal, capacidade e assimetria de cada enlace aberto.",
         Categoria.DESEMPENHO,
         enlaces.qualidade,
         (
@@ -131,8 +125,7 @@ RELATORIOS: dict[str, Definicao] = {
     ),
     "enlaces_instaveis": Definicao(
         "Enlaces instáveis",
-        "Quem mais abriu e fechou. Nenhum equipamento caiu e a malha esteve "
-        "ruim mesmo assim — o modo de falha que um relatório por nó não mostra.",
+        "Enlaces que mais abriram e fecharam no período.",
         Categoria.DESEMPENHO,
         enlaces.instabilidade,
         (P_LIMITE,),
@@ -140,14 +133,13 @@ RELATORIOS: dict[str, Definicao] = {
     # ------------------------------ inventário
     "cobertura": Definicao(
         "Cobertura da coleta",
-        "O tamanho do escuro: de quanto do parque a plataforma realmente sabe "
-        "alguma coisa.",
+        "Quanto do parque é observado, por papel.",
         Categoria.INVENTARIO,
         inventario.cobertura,
     ),
     "parque": Definicao(
         "O parque",
-        "Por papel, zona e fabricante — inclusive o que não se sabe.",
+        "Contagem por papel, zona e fabricante.",
         Categoria.INVENTARIO,
         inventario.parque,
         (P_ZONA,),
@@ -155,14 +147,13 @@ RELATORIOS: dict[str, Definicao] = {
     # ------------------------------ eventos
     "eventos_severidade": Definicao(
         "Por gravidade",
-        "Quantos de cada grau, de quantas origens distintas.",
+        "Contagem de eventos por gravidade.",
         Categoria.EVENTOS,
         eventos.por_severidade,
     ),
     "eventos_faladores": Definicao(
         "Quem mais falou",
-        "Origem barulhenta ou está com defeito repetitivo, ou ficou com "
-        "logging debug ligado desde a última manutenção.",
+        "Origens que mais mandaram evento.",
         Categoria.EVENTOS,
         eventos.faladores,
         (
@@ -174,22 +165,21 @@ RELATORIOS: dict[str, Definicao] = {
     # ------------------------------ governança
     "alteracoes": Definicao(
         "Alterações",
-        "Quem mexeu em quê, e quando — inclusive as tentativas recusadas.",
+        "Ações registradas, inclusive tentativas recusadas.",
         Categoria.GOVERNANCA,
         governanca.alteracoes,
         (P_LIMITE, Param("login", "Só de", TipoParam.TEXTO, "", ajuda="login exato")),
     ),
     "sondagens": Definicao(
         "Diagnósticos",
-        "Quem apontou qual sonda para onde, e o que deu.",
+        "Sondas disparadas, por quem e com que resultado.",
         Categoria.GOVERNANCA,
         governanca.sondagens,
         (P_LIMITE,),
     ),
     "higiene": Definicao(
         "Contradições",
-        "Coisas que a planilha diz e que não podem ser todas verdade ao mesmo "
-        "tempo. A lista de trabalho humano.",
+        "Contradições do cadastro, por categoria.",
         Categoria.GOVERNANCA,
         governanca.higiene,
     ),

@@ -71,9 +71,11 @@ a:hover{text-decoration:underline}
 .barra{display:flex;align-items:center;gap:16px;padding:0 18px;height:52px;
   background:var(--barra);color:var(--barra-texto)}
 .identidade{display:flex;align-items:center;gap:11px;flex:0 0 auto}
-.emblema{width:30px;height:30px;border-radius:50%;background:#fff;display:grid;
-  place-items:center;flex:0 0 auto}
-.emblema svg{width:18px;height:18px;color:#0E2A4D}
+/* O logo é azul sobre branco e a barra é escura: vai numa placa branca, que é
+   o fundo em que a marca foi desenhada para viver. Recolorir a marca para
+   caber num fundo escuro seria alterá-la. */
+.identidade .logo{height:32px;width:auto;background:#fff;border-radius:5px;
+  padding:4px 9px;display:block;flex:0 0 auto}
 .identidade .txt{display:flex;flex-direction:column;line-height:1.15}
 .identidade b{font-size:13.5px;font-weight:700;letter-spacing:.06em}
 .identidade span{font-size:10.5px;color:var(--barra-fraco);letter-spacing:.07em}
@@ -548,3 +550,98 @@ tr.enlace-ruim td:nth-child(2){color:var(--vermelho);font-weight:600}
   border-left:3px solid var(--verde);font-size:12.5px}
 tr.totais td{border-top:1.5px solid var(--linha-forte);font-weight:600;
   background:var(--cartao-2)}
+
+/* ================================= rede ================================= */
+.rede{display:grid;grid-template-columns:1fr;gap:14px;align-items:start}
+.rede.com-painel{grid-template-columns:1fr 340px}
+@media (max-width:1100px){.rede.com-painel{grid-template-columns:1fr}}
+.col-rede{min-width:0;display:flex;flex-direction:column;gap:14px}
+
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+@media (max-width:1200px){.kpis{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--cartao);border:1px solid var(--linha);border-radius:var(--raio);
+  padding:11px 13px;display:flex;flex-direction:column;gap:1px;min-width:0}
+.kpi .rot{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--apagado)}
+.kpi b{font-size:21px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
+.kpi .sub{font-size:11px;color:var(--texto-2)}
+.kpi.alerta{border-color:var(--vermelho)}
+.kpi.alerta b{color:var(--vermelho)}
+
+.mapa-caixa{position:relative}
+.mapa-rede{width:100%;height:auto;display:block;background:var(--cartao-2);
+  border-radius:var(--raio)}
+/* Enlace bom quase some e enlace ruim salta. Com 545 linhas, pintar todas
+   com o mesmo peso dá um emaranhado em que o problema fica escondido no meio
+   do que está funcionando. */
+/* A linha do enlace passa por cima do centro do nó — é onde ela termina. Com
+   545 linhas, isso deixava rádio nenhum clicável: o clique caía sempre na
+   linha. O enlace não precisa de clique; o rádio precisa. */
+.mapa-rede .el{stroke-width:1;pointer-events:none}
+.mapa-rede .el.q-ok{opacity:.3}
+.mapa-rede .el.q-atencao{opacity:.5;stroke-width:1.1}
+.mapa-rede .el.q-mau{opacity:.9;stroke-width:1.6}
+.mapa-rede .el.q-nd{opacity:.12;stroke-dasharray:3 3}
+.mapa-rede .el.aceso{stroke-width:2.6;opacity:1}
+.mapa-rede .conta{font-size:10px;fill:var(--apagado);text-anchor:end}
+.mapa-rede .no{cursor:pointer}
+.mapa-rede .no circle,.mapa-rede .no rect{fill:var(--cartao);
+  stroke:var(--linha-forte);stroke-width:1.6}
+/* Alvo de clique maior que o desenho: o nó de veículo tem 4,5 px de raio e
+   ninguém acerta isso com o mouse num mapa de 141 pontos. */
+/* `pointer-events:all` explícito porque a regra da posição vencida apaga o
+   preenchimento, e sem preenchimento o navegador para de testar o clique. */
+.mapa-rede .no circle.alvo{fill:transparent;stroke:none;pointer-events:all}
+.mapa-rede .no.e-ok circle,.mapa-rede .no.e-ok rect{stroke:var(--verde)}
+.mapa-rede .no.e-mau circle,.mapa-rede .no.e-mau rect{stroke:var(--vermelho);
+  fill:var(--vermelho-fundo)}
+.mapa-rede .no.e-incerto circle,.mapa-rede .no.e-incerto rect{stroke:var(--ambar);
+  stroke-dasharray:2 1.6}
+.mapa-rede .no.sel circle,.mapa-rede .no.sel rect{stroke:var(--azul);stroke-width:3}
+.mapa-rede .no.vencido circle:not(.alvo),
+.mapa-rede .no.vencido rect{fill:none;opacity:.45;stroke-dasharray:1.5 1.5}
+.legenda-mapa .cr.venc{border-style:dashed;opacity:.55}
+.mapa-rede .rot{font-size:8.5px;fill:var(--texto-2);font-family:var(--mono)}
+.mapa-rede .escala line{stroke:var(--texto-2);stroke-width:1}
+.mapa-rede .escala text{font-size:9.5px;fill:var(--texto-2);text-anchor:middle}
+.filtros-mapa{display:flex;gap:6px;margin-bottom:9px}
+.bt.pequeno{font-size:11px;padding:4px 10px}
+/* As abas da seção precisam caber numa linha; empilhadas, o cabeçalho cresce
+   e empurra o mapa para fora da tela. */
+.cx>header .dir{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+.legenda-mapa{display:flex;gap:14px;flex-wrap:wrap;padding:9px 2px 0;font-size:11px;
+  color:var(--texto-2);align-items:center}
+.legenda-mapa i{display:inline-block;margin-right:5px;vertical-align:middle}
+.legenda-mapa .tr{width:9px;height:9px;border:1.6px solid var(--linha-forte);
+  border-radius:1.5px}
+.legenda-mapa .tr.semifixo{width:7px;height:7px}
+.legenda-mapa .cr{width:8px;height:8px;border:1.6px solid var(--linha-forte);
+  border-radius:50%}
+.legenda-mapa .ln{width:16px;height:2.5px;border-radius:2px}
+.legenda-mapa .ln.ok{background:var(--verde)}
+.legenda-mapa .ln.atencao{background:var(--ambar)}
+.legenda-mapa .ln.mau{background:var(--vermelho)}
+
+.notas-rede{display:flex;flex-wrap:wrap;gap:6px 16px;padding:9px 14px;
+  border-top:1px solid var(--linha);font-size:11.5px;color:var(--texto-2)}
+.nota-rede{font-size:11px;color:var(--apagado);padding:6px 0 0}
+td.aviso,dd.aviso{color:var(--ambar);font-weight:600}
+
+.grade-ptp{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));
+  gap:12px;padding:14px}
+/* Nome de rádio é longo e o par tem dois. Sem isto o título quebra em duas
+   linhas e desalinha a pastilha de estado. */
+.ptp>header h2{font-size:12.5px;line-height:1.3}
+.ptp .pares{gap:5px 12px;font-size:12px}
+.ptp .sentidos{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:11px}
+.sentido{background:var(--cartao-2);border-radius:6px;padding:9px 10px}
+.sentido .rot{display:block;font-size:10px;color:var(--apagado);margin-bottom:5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sentido .par{display:flex;align-items:baseline;gap:5px}
+.sentido .par b{font-size:17px;font-variant-numeric:tabular-nums}
+.sentido .par span{font-size:10.5px;color:var(--texto-2)}
+
+.painel-radio{position:sticky;top:14px;max-height:calc(100vh - 130px);overflow:auto}
+.sub-titulo{font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--apagado);margin:14px 0 6px}

@@ -186,14 +186,11 @@ async def por_frota(
         )
     if sem_medida:
         r.notas.append(
-            f"{sem_medida} dispositivos ficaram fora da média por não terem "
-            "observação no período — nunca sondado não é o mesmo que caído, e "
-            "contá-los como zero rebaixaria a frota inteira por falta de coleta."
+            f"{sem_medida} dispositivos sem observação no período — fora da média."
         )
     if sem_funcao := sum(1 for _, fn in grupos if fn == "não definida"):
         r.notas.append(
-            f"{sem_funcao} grupos aparecem como função 'não definida': o cadastro "
-            "ainda não diz o que aqueles ativos fazem."
+            f"{sem_funcao} grupos com função de negócio não definida no cadastro."
         )
     return r
 
@@ -245,19 +242,16 @@ async def piores(
     )
     r.somar()
     r.notas.append(
-        "Cada linha é o tempo fora do ar de um equipamento. A coluna não é "
-        "somada no rodapé porque a soma de durações de equipamentos diferentes "
-        "não é uma duração: é volume de indisponibilidade, em equipamento·hora."
+        "Coluna não somada: soma de durações de equipamentos diferentes é "
+        "equipamento·hora, não duração."
     )
     if len(candidatos) > limite:
         r.notas.append(
-            f"{len(candidatos) - limite} equipamentos também tiveram queda no "
-            f"período e não cabem nesta lista — aumente 'quantas linhas' para vê-los."
+            f"{len(candidatos) - limite} equipamentos com queda além dos mostrados."
         )
     if not candidatos:
         r.notas.append(
-            "nenhum equipamento medido ficou fora do ar no período. Se isso "
-            "surpreende, confira a aba Coleta: módulo parado não gera transição."
+            "Nenhum equipamento medido ficou fora do ar no período."
         )
     return r
 
@@ -339,17 +333,14 @@ async def quedas(
         )
     if abertas:
         r.notas.append(
-            f"{abertas} quedas ainda não terminaram: a duração é contada até o fim "
-            "do período, não até um retorno que não aconteceu."
+            f"{abertas} quedas em curso — duração contada até o fim do período."
         )
     if incertas:
         r.notas.append(
-            f"{incertas} dessas estão marcadas como incertas — a coleta suspeita de "
-            "isolamento do coletor, e nesse caso 'sem resposta' ainda não é "
-            "afirmação de queda do equipamento."
+            f"{incertas} marcadas como incertas: suspeita de isolamento do coletor."
         )
     if minimo:
-        r.notas.append(f"quedas de menos de {int(minimo)} s foram omitidas por filtro.")
+        r.notas.append(f"Quedas de menos de {int(minimo)} s omitidas por filtro.")
     return r
 
 
@@ -421,12 +412,11 @@ async def por_dia(
             f"{numero(pior['disponibilidade_pct'], 2)}%."
         )
     r.notas.append(
-        "'Dispositivos medidos' e 'com alguma queda' não são somados no rodapé: o "
-        "mesmo equipamento aparece em vários dias, e a soma contaria repetido."
+        "'Medidos' e 'com alguma queda' não somam: o mesmo equipamento aparece "
+        "em vários dias."
     )
     r.notas.append(
-        "'Fora do ar' está em equipamento·hora: é a soma do tempo parado de "
-        "equipamentos diferentes, não um intervalo de relógio. Num dia de 24 h "
-        "com 600 equipamentos, o máximo possível é 14.400 equip·h."
+        "'Fora do ar' em equipamento·hora. Num dia de 24 h com 600 equipamentos, "
+        "o máximo é 14.400."
     )
     return r

@@ -72,13 +72,10 @@ async def alteracoes(
     recusas = sum(1 for x in linhas if "recusad" in x["acao"] or "negad" in x["acao"])
     if recusas:
         r.notas.append(
-            f"{recusas} das linhas são tentativas recusadas. Elas ficam de "
-            "propósito: login que falha e não deixa vestígio é o que se quer ver "
-            "depois."
+            f"{recusas} linhas são tentativas recusadas."
         )
     r.notas.append(
-        "A auditoria é somente-escrita no esquema: não existe rota que altere ou "
-        "apague. Registro que se pode editar não é registro."
+        "A auditoria é somente-escrita: não há rota que altere ou apague."
     )
     return r
 
@@ -184,13 +181,10 @@ async def higiene(
             f"{len(linhas)} categorias."
         )
     r.notas.append(
-        "Estes achados são da última semeadura, não da janela escolhida: "
-        "descrevem o cadastro como ele está, não algo que aconteceu no período."
+        "Achados da última semeadura, não da janela escolhida."
     )
     r.notas.append(
-        "Nenhum deles foi corrigido automaticamente. A plataforma registra a "
-        "contradição e mantém as duas versões; quem decide qual vale é quem "
-        "conhece o equipamento."
+        "Nada é corrigido automaticamente: as duas versões ficam guardadas."
     )
     return r
 

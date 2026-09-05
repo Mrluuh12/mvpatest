@@ -1,4 +1,4 @@
-# Plataforma TI + OT — inventário, coleta, séries, diagnóstico e relatórios
+# AMPS — plataforma TI + OT da Anglo American
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -738,6 +738,67 @@ tempo constante. O token de sessão entregue ao navegador **não** é o que fica
 no banco: lá fica o SHA-256 dele, então vazamento do banco entrega resumos
 inúteis, não sessões válidas.
 
+## Seção Rede — enlaces e rádios
+
+O resto da plataforma olha o parque por **ativo**: o caminhão, a escavadeira, o
+que aquilo faz na operação. Esta seção olha por **enlace**, que é a unidade que
+quebra a produção numa malha sem fio — nenhum rádio precisa cair para a frota
+perder rede.
+
+Quatro vistas, seis indicadores no topo (rádios no ar, enlaces abertos, sinal
+mediano, taxa mediana, vizinhos por rádio, enlaces ruins):
+
+**Mapa** — os rádios em coordenada de terreno, com os enlaces entre eles. Sem
+imagem de fundo: numa rede de mina não há como buscar telha de mapa, e um fundo
+genérico seria pior que nenhum. O que o desenho precisa é posição relativa
+correta e escala, e as duas saem do GPS que o exportador já publica. A
+longitude é corrigida pelo cosseno da latitude — sem isso o mapa fica esticado
+no eixo X e a distância entre rádios sai errada; a 19° S, em 21%.
+
+Com 141 rádios e 545 enlaces, "mostrar tudo" é emaranhado. O enlace bom fica
+apagado e o ruim salta, e há três recortes: tudo, só problemas, só
+infraestrutura.
+
+**Enlaces** — uma linha por par de rádios, com **ida e volta lado a lado**. O
+grafo guarda meia-aresta dirigida porque o SNR que A vê de B não é o que B vê
+de A; para operar, o útil é ver os dois e a diferença entre eles.
+
+**Rádios** — vizinhos, melhor e pior sinal, ruído, potência TX, clientes,
+temperatura, CPU, bateria, velocidade.
+
+**Ponto a ponto** — os enlaces entre infraestrutura fixa, um cartão por enlace
+com os dois sentidos abertos. Se um destes cai, um pedaço da mina perde rede,
+não um caminhão. A classe sai do cadastro: estação base e gate station são
+fixas, estação móvel é torre sobre carreta, o resto anda.
+
+### Posição tem prazo de validade
+
+Um caminhão a 30 km/h anda 5 km em dez minutos. Desenhá-lo onde ele estava há
+três horas é afirmar onde ele **não** está — e um mapa que mente sobre posição
+é pior que mapa nenhum. A idade da leitura viaja junto: passados dez minutos o
+rádio é desenhado em contorno e entra na contagem do rodapé.
+
+### O que a seção revelou no primeiro dia
+
+**672 de 1.226 enlaces apontam para um vizinho que o cadastro não conhece.** O
+rádio relata o vizinho pela identidade que ele vê; quem resolve para um
+equipamento é a plataforma. Quando não resolve, o enlace existe e o outro lado
+é um MAC solto. É achado de cadastro, não defeito de coleta, e some da conta se
+ninguém contar — por isso está no rodapé da tela.
+
+**Só 3 enlaces têm os dois sentidos medidos.** O resto tem um lado só, o que
+numa malha é normal (o outro rádio ainda não relatou este vizinho) mas em
+volume assim indica que a resolução de identidade está perdendo o par de volta.
+
+### Um cuidado ao ler o mapa neste repositório
+
+O ambiente de desenvolvimento usa um Prometheus de mentira que **sorteia** as
+coordenadas. Contra ele, a correlação entre distância e sinal dá r = 0,06 — não
+existe. O código do mapa está certo; o dado sintético é que não tem física. Com
+o exportador real apontado, essa correlação é a primeira coisa a conferir: se
+continuar perto de zero, o problema está no pareamento de identidade, não no
+desenho.
+
 ## Relatórios
 
 O catálogo é onde se perde ou se ganha a comparação com o SolarWinds, que traz
@@ -1033,7 +1094,9 @@ porque a diferença entre eles era exatamente o tamanho do defeito.
 ## O que ainda não está aqui
 
 - Módulos de outros fabricantes: Astra/InfiNet (18 rádios PtP/PtMP), MEMS
-  Michelin (46 gateways de pneu), PTX (97 IHM de bordo)
+  Michelin (46 gateways de pneu), PTX (97 IHM de bordo). Enquanto eles não
+  existem, a seção Rede mostra só a malha Rajant — o enlace PtP de rádio
+  RADWIN/Astra tem o mesmo formato e entra sem mudar tela.
 - Backup e comparação de configuração de switches (o NCM do SolarWinds)
 - Qual porta do switch tem qual MAC (o UDT do SolarWinds)
 - Gráfico com mais de uma série sobreposta (o PerfStack do SolarWinds). Hoje
