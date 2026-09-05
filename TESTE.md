@@ -237,7 +237,42 @@ portas (e diz embaixo que somou), ou escreva `Gi0/1` para uma só.
 `iface_status_oper` sem porta escolhida **recusa** e explica: somar códigos de
 estado de 48 portas não significaria nada.
 
-## 7. Diagnóstico dirigido — perguntar a um equipamento agora
+## 7. Relatórios
+
+Aba **Relatórios**. O menu à esquerda agrupa quinze relatórios por pergunta;
+cada um traz seus próprios parâmetros e sua própria janela padrão.
+
+### 7.1 Os quatro que valem abrir primeiro
+
+| Relatório | Por que este |
+|---|---|
+| **Quedas, uma a uma** | cada queda com hora de início, de volta e duração — o que se abre depois de um turno ruim |
+| **Enlaces: qualidade** | a coluna **assimetria** compara o SNR nos dois sentidos; 6 dB ou mais costuma ser antena torta |
+| **Saturação prevista** | dias até o limiar, com R² e confiança ao lado — precisa do Prometheus ligado |
+| **Contradições** | o que a planilha diz e não pode ser tudo verdade ao mesmo tempo |
+
+### 7.2 Três formatos
+
+**CSV** e **Imprimir / PDF** ficam acima da tabela. O CSV traz título, período,
+parâmetros e ressalvas em comentário, com os valores crus — dá para calcular em
+cima. A impressão abre uma folha pronta: `Ctrl+P` → *Salvar como PDF*.
+
+Não existe botão de PDF no servidor de propósito: o navegador já faz isso, e
+com as fontes de quem imprime.
+
+### 7.3 O que conferir
+
+1. **Equipamento-hora.** Em *Dia a dia*, a coluna "Fora do ar" está em
+   `equip·h`, não em dias. Num dia de 24 h com 600 equipamentos o máximo
+   possível é 14.400 — se aparecer "600 d", a unidade voltou a estar errada.
+2. **Previsão que não se sustenta não vira manchete.** Abra *Saturação
+   prevista* logo depois de ligar a exportação. Com pouca história, a frase de
+   resumo deve dizer que **nenhuma projeção se sustenta** — e não anunciar
+   "satura em 0,7 dias". É a diferença entre a ferramenta ajudar e induzir.
+3. **Ressalva no CSV.** Baixe qualquer um e abra num editor de texto: as linhas
+   `# ressalva:` têm de estar lá. Se sumirem, o número passa a viajar sozinho.
+
+## 8. Diagnóstico dirigido — perguntar a um equipamento agora
 
 Coleta responde *"como ele esteve"*. Diagnóstico responde *"o que está
 acontecendo com ele **neste** minuto"* — e é uma pessoa que dispara, num alvo,
@@ -277,7 +312,7 @@ faixa de portas (é reconhecimento, e já derrubou CLP em mina), teste de banda
 carga útil, e carga útil tem credencial). São ausências decididas, não
 pendências.
 
-## 8. Rodar a suíte
+## 9. Rodar a suíte
 
 ```bash
 export PLATAFORMA_BANCO_TESTE="postgresql+asyncpg://USUARIO@HOST:5432/plataforma_teste"
@@ -292,7 +327,7 @@ O banco de teste é separado de propósito: as fixtures apagam o esquema entre
 os casos, e uma suíte que destrói o banco de desenvolvimento é uma suíte que
 as pessoas param de rodar.
 
-## 9. Onde olhar quando algo não bate
+## 10. Onde olhar quando algo não bate
 
 | Sintoma | Onde a resposta está |
 |---|---|
@@ -301,7 +336,9 @@ as pessoas param de rodar.
 | "por que este gráfico está vazio?" | a linha de procedência embaixo dele traz o PromQL exato |
 | "o cadastro está errado onde?" | aba **Cadastro** — conflitos, homônimos, divergências |
 | "quem mudou isto?" | cartão **Histórico de alterações** na ficha |
-| "quem sondou este rádio, e o que deu?" | tabela `diagnostico` e `auditoria` |
+| "quem sondou este rádio, e o que deu?" | Relatórios → **Diagnósticos** |
+| "quanto a frota ficou parada mês passado?" | Relatórios → **Por frota**, janela 30d |
+| "esta porta vai saturar?" | Relatórios → **Saturação prevista** |
 
 ## Verificações que valem fazer no primeiro dia
 
@@ -344,3 +381,7 @@ as pessoas param de rodar.
    velho não. Se você vir uma reta longa depois de derrubar o coletor,
    `PLATAFORMA_METRICAS_VALIDADE_S` está alto demais para a cadência da sua
    coleta.
+10. **Relatório não esconde a própria fraqueza.** Em *Saturação prevista*, a
+    coluna Confiança tem de dizer "história curta" enquanto a série for mais
+    nova que 24 h. Uma previsão que se apresenta como confiável sobre seis
+    horas de dado é pior que previsão nenhuma.

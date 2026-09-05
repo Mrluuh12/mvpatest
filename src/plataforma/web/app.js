@@ -88,7 +88,7 @@
     sel: null, dispSel: null, filtro: "", rapido: null, aba: "ativo",
     fichas: new Map(), abertos: new Set(["FROTA"]),
     arranjo: null, origemArranjo: "", catalogo: [], editandoTela: false, leituras: [], vizinhos: [], series: {}, eventos: [], janela: {}, metricas: [], sondas: [], diagResultado: null,
-    relSel: null, relJanela: "7d", relLista: null,
+    relSel: null, relJanela: "7d", relLista: null, relParams: {},
   };
 
   /* três situações distintas, nunca duas */
@@ -996,50 +996,158 @@
 
   const JANELAS_REL = ["24h", "7d", "30d", "90d"];
 
+  /** Formata um valor pelo tipo que o servidor declarou para a coluna.
+   *
+   *  A tela não adivinha: percentual é percentual porque a coluna disse que é,
+   *  e duração vira "2 h 14 min" em vez de "8040". A conta que quem lê faz de
+   *  cabeça no meio de uma reunião é a que sai errada. */
+  function valorDeColuna(v, col) {
+    if (v === null || v === undefined || v === "") return "—";
+    if (col.tipo === "percentual") return `${Number(v).toFixed(2).replace(".", ",")}%`;
+    if (col.tipo === "duracao") return duracaoCurta(Number(v));
+    if (col.tipo === "instante") return diaHora(new Date(v).getTime() / 1000);
+    if (col.tipo === "numero" && typeof v === "number")
+      return v.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+    return String(v);
+  }
+
+  function duracaoCurta(s) {
+    s = Math.round(s);
+    if (s < 60) return `${s} s`;
+    if (s < 3600) return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+    if (s < 86400) return `${Math.floor(s / 3600)} h ${
+      String(Math.floor((s % 3600) / 60)).padStart(2, "0")} min`;
+    return `${Math.floor(s / 86400)} d ${
+      String(Math.floor((s % 86400) / 3600)).padStart(2, "0")} h`;
+  }
+
+  const numerica = (col) =>
+    ["numero", "percentual", "duracao"].includes(col.tipo);
+
+  /** Controles dos parâmetros do relatório. Mesma ideia das opções de cartão:
+   *  o servidor declara o tipo e a tela desenha, sem conhecer relatório nenhum. */
+  function controleDeParametro(pr, valor) {
+    const id = `rp-${pr.nome}`;
+    const comum = `data-relparam="${esc(pr.nome)}" id="${id}"`;
+    let controle;
+    if (pr.tipo === "escolha") {
+      controle = `<select ${comum}>${(pr.escolhas || []).map((c) => `<option value="${esc(c)}"
+        ${String(c) === String(valor ?? "") ? "selected" : ""}>${
+          esc(c === "" ? "todas" : c)}</option>`).join("")}</select>`;
+    } else if (pr.tipo === "inteiro" || pr.tipo === "decimal") {
+      controle = `<input type="number" ${pr.tipo === "decimal" ? 'step="0.1"' : ""}
+        ${comum} value="${esc(valor ?? pr.padrao ?? "")}">`;
+    } else {
+      controle = `<input type="text" ${comum} value="${esc(valor ?? pr.padrao ?? "")}"
+        placeholder="${esc(pr.ajuda || "")}">`;
+    }
+    return `<label class="param" for="${id}"><span>${esc(pr.rotulo)}</span>
+      ${controle}${pr.ajuda ? `<i class="nota">${esc(pr.ajuda)}</i>` : ""}</label>`;
+  }
+
+  const paramsDaUrl = () => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(S.relParams || {})) {
+      if (v !== "" && v !== null && v !== undefined) q.set(k, v);
+    }
+    return q;
+  };
+
   async function pintarRelatorios() {
-    const nome = S.relSel || "disponibilidade_frota";
-    const janela = S.relJanela || "7d";
-    $("centro").innerHTML = `<div class="grade g1"><section class="cx">
-      <header><h2>Relatórios</h2></header>
-      <div class="conteudo"><p class="nada">carregando…</p></div></section></div>`;
-
     if (!S.relLista) S.relLista = await api("/api/v1/relatorios").catch(() => []);
-    const r = await api(
-      `/api/v1/relatorios/${encodeURIComponent(nome)}?janela=${janela}`
-    ).catch((e) => ({ erro: e.message }));
+    const nome = S.relSel || (S.relLista[0] || {}).nome || "disponibilidade_frota";
+    const def = S.relLista.find((x) => x.nome === nome) || { parametros: [] };
+    const janela = S.relJanela || "7d";
 
-    const abas = S.relLista.map((x) => `<button class="bt ${x.nome === nome ? "cheio" : ""}"
-      data-rel="${esc(x.nome)}" title="${esc(x.descricao)}">${esc(x.rotulo)}</button>`).join("");
+    // Menu por categoria: quem procura relatório pensa "quanto a britagem
+    // ficou parada", não "isto sai da tabela de transições".
+    const porCat = new Map();
+    for (const x of S.relLista) {
+      if (!porCat.has(x.categoria_rotulo)) porCat.set(x.categoria_rotulo, []);
+      porCat.get(x.categoria_rotulo).push(x);
+    }
+    const menu = [...porCat.entries()].map(([cat, itens]) => `
+      <div class="grupo-rel"><h3>${esc(cat)}</h3>
+        ${itens.map((x) => `<button class="item-rel ${x.nome === nome ? "cheio" : ""}"
+          data-rel="${esc(x.nome)}" ${x.disponivel ? "" : "disabled"}
+          title="${esc(x.disponivel ? x.descricao : x.motivo)}">
+          <b>${esc(x.rotulo)}</b><span>${esc(x.disponivel ? x.descricao : x.motivo)}</span>
+        </button>`).join("")}
+      </div>`).join("");
+
     const janelas = JANELAS_REL.map((j) => `<button class="janela"
       data-rel-janela="${j}" aria-current="${j === janela}">${j}</button>`).join("");
+    const params = (def.parametros || []).map(
+      (pr) => controleDeParametro(pr, (S.relParams || {})[pr.nome])).join("");
 
-    let corpo;
-    if (r.erro) corpo = `<p class="nada">${esc(r.erro)}</p>`;
-    else {
-      const cab = r.colunas.map((c) => `<th>${esc(c.replace(/_/g, " "))}</th>`).join("");
-      const linhas = r.linhas.map((l) => `<tr>${r.colunas.map((c) => {
-        const v = l[c];
-        const num = typeof v === "number";
-        return `<td class="${num ? "mono num" : ""}">${
-          num ? esc(v.toLocaleString("pt-BR")) : esc(v)}</td>`;
-      }).join("")}</tr>`).join("");
-      corpo = `<div class="rol"><table>
+    const esqueleto = (corpo, titulo) => {
+      const q = paramsDaUrl();
+      q.set("janela", janela);
+      const base = `/api/v1/relatorios/${encodeURIComponent(nome)}?${q}`;
+      $("centro").innerHTML = `<div class="relatorios">
+        <aside class="menu-rel">${menu}</aside>
+        <section class="cx corpo-rel">
+          <header><h2>${esc(titulo)}</h2><span class="dir">${janelas}</span></header>
+          ${params ? `<div class="params-rel">${params}
+            <button class="bt cheio" data-rel-aplicar>Aplicar</button></div>` : ""}
+          <div class="acoes-rel">
+            <a class="bt" href="${base}&formato=csv" download>${ico.lista} CSV</a>
+            <a class="bt" href="${base}&formato=impressao" target="_blank"
+               rel="noopener">${ico.lapis} Imprimir / PDF</a>
+          </div>
+          <div class="conteudo rente">${corpo}</div>
+        </section></div>`;
+    };
+
+    esqueleto(`<p class="nada">gerando…</p>`, def.rotulo || "Relatórios");
+
+    const q = paramsDaUrl();
+    q.set("janela", janela);
+    const r = await api(`/api/v1/relatorios/${encodeURIComponent(nome)}?${q}`)
+      .catch((e) => ({ erro: e.message }));
+
+    if (r.erro) return esqueleto(`<p class="nada">${esc(r.erro)}</p>`, def.rotulo || "");
+
+    const cab = r.colunas.map((c) => `<th class="${numerica(c) ? "num" : ""}">
+      ${esc(c.rotulo)}${c.unidade ? ` <small>(${esc(c.unidade)})</small>` : ""}</th>`).join("");
+    const linhas = r.linhas.map((l) => `<tr>${r.colunas.map((c) => {
+      const bruto = l[c.nome];
+      const txt = valorDeColuna(bruto, c);
+      if (c.tipo === "selo")
+        return `<td><span class="selo liso ${SELO_REL[bruto] || "neutro"}">${esc(txt)}</span></td>`;
+      return `<td class="${numerica(c) ? "mono num" : ""}">${esc(txt)}</td>`;
+    }).join("")}</tr>`).join("");
+
+    const totais = Object.keys(r.totais || {}).length
+      ? `<tr class="totais">${r.colunas.map((c, i) => i === 0
+          ? `<td>Total</td>`
+          : `<td class="${numerica(c) ? "mono num" : ""}">${
+              c.nome in r.totais ? esc(valorDeColuna(r.totais[c.nome], c)) : ""}</td>`
+        ).join("")}</tr>`
+      : "";
+
+    const corpo = `
+      ${r.resumo ? `<p class="resumo-rel">${esc(r.resumo)}</p>` : ""}
+      <div class="rol"><table>
         <thead><tr>${cab}</tr></thead>
         <tbody>${linhas || `<tr><td colspan="${r.colunas.length}" class="nulo">
-          sem linhas no período</td></tr>`}</tbody></table></div>
-        ${(r.notas || []).map((n) => `<p class="ressalva">${esc(n)}</p>`).join("")}`;
-    }
-
-    $("centro").innerHTML = `<div class="grade g1"><section class="cx">
-      <header><h2>${esc(r.titulo || "Relatórios")}</h2>
-        <span class="dir">${janelas}</span></header>
-      <div class="barra-rel">${abas}
-        <a class="bt" style="margin-left:auto"
-           href="/api/v1/relatorios/${encodeURIComponent(nome)}?janela=${janela}&formato=csv"
-           download>${ico.lista} Baixar CSV</a></div>
-      <div class="conteudo rente">${corpo}</div>
-    </section></div>`;
+          sem linhas no período — o que não é o mesmo que sem problema</td></tr>`}
+          ${totais}</tbody></table></div>
+      ${(r.notas || []).map((n) => `<p class="ressalva">${esc(n)}</p>`).join("")}`;
+    esqueleto(corpo, r.titulo || def.rotulo);
   }
+
+  //: Pastilhas do relatório. Gravidade de syslog e situação de queda usam a
+  //: mesma paleta do resto da plataforma — vermelho é o equipamento dizendo
+  //: que quebrou, âmbar é aviso, e o que a plataforma não sabe fica neutro.
+  const SELO_REL = {
+    emergencia: "vermelho", alerta: "vermelho", critico: "vermelho", erro: "vermelho",
+    aviso: "ambar", atencao: "ambar",
+    "em curso": "vermelho", incerta: "ambar", encerrada: "neutro",
+    "não respondeu": "vermelho", respondeu: "verde",
+    "história curta": "ambar", "ajuste fraco": "ambar", razoável: "verde",
+    "aberto agora": "verde", fechado: "neutro",
+  };
 
   const pintarCobertura = () => {
     const linhas = S.sinais.map((s) => `<tr><td class="mono">${esc(s.familia)}</td>
@@ -1361,9 +1469,26 @@
       if (await editarTela(e, contextoAtual(await ficha(S.sel)))) return;
     }
     const br = e.target.closest("[data-rel]");
-    if (br) { S.relSel = br.dataset.rel; await pintarRelatorios(); return; }
+    if (br) {
+      // Trocar de relatório zera os parâmetros: "limite=5" do Top N não quer
+      // dizer nada no relatório de cobertura, e carregar valor de um para o
+      // outro faz a tela responder pergunta que ninguém fez.
+      S.relSel = br.dataset.rel; S.relParams = {};
+      // A janela também é do relatório: sete dias serve para disponibilidade e
+      // deixa a previsão vazia, porque a série é mais nova que a janela.
+      const alvo = S.relLista.find((x) => x.nome === S.relSel);
+      S.relJanela = (alvo && alvo.janela_padrao) || "7d";
+      await pintarRelatorios(); return;
+    }
     const brj = e.target.closest("[data-rel-janela]");
     if (brj) { S.relJanela = brj.dataset.relJanela; await pintarRelatorios(); return; }
+    if (e.target.closest("[data-rel-aplicar]")) {
+      S.relParams = {};
+      document.querySelectorAll("[data-relparam]").forEach((el) => {
+        S.relParams[el.dataset.relparam] = el.value;
+      });
+      await pintarRelatorios(); return;
+    }
     const bj = e.target.closest("[data-janela-ir]");
     if (bj && S.dispSel) {
       // A janela é escolha de quem está olhando **agora**, e por isso mora

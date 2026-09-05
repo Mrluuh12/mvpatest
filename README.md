@@ -1,4 +1,4 @@
-# Plataforma TI + OT — marcos M0 a M3, área ADM, diagnóstico e séries
+# Plataforma TI + OT — inventário, coleta, séries, diagnóstico e relatórios
 
 Primeira entrega da plataforma de observabilidade TI + OT: transformar a
 planilha de inventário da mina em **ativos, dispositivos e arestas** — com
@@ -621,39 +621,6 @@ formatação ruim. E mensagem que não casa com formato nenhum vira evento mesmo
 assim: equipamento que fala errado ainda está falando, e o aviso que interessa
 costuma vir no dia em que tudo está estranho.
 
-## Relatórios
-
-Um relatório aqui devolve **as ressalvas junto do número**, e elas não são
-rodapé decorativo: dizem quantos equipamentos ficaram fora da conta e por quê.
-*"Disponibilidade de 94%"* sem *"de 22 dos 46 sondados"* é número que alguém
-defende numa reunião sem saber o que está defendendo.
-
-| Relatório | Responde |
-|---|---|
-| **Disponibilidade** | por frota e função de negócio, com a média **e o pior** ao lado |
-| **Cobertura** | o que está sendo vigiado (responde ou não) versus medido (tem número) |
-
-A média de uma frota esconde a máquina que está mal; as duas colunas juntas,
-não. E equipamento nunca sondado **fica fora da média** em vez de entrar como
-zero — contá-lo assim rebaixaria a frota por falta de coleta, que é problema
-de quem opera a plataforma, não da mina.
-
-O CSV leva as ressalvas em comentário no topo. Quem abrir a planilha três
-semanas depois precisa das mesmas que quem viu a tela.
-
-### O defeito que os relatórios revelaram
-
-O estado no início da janela caía no estado **corrente** quando não havia
-transição anterior — ignorando que a primeira transição *dentro* da janela já
-diz de onde veio. Um equipamento que passou 12 h de pé e caiu no meio era
-contado como caído desde o início: **0% em vez de 50%**.
-
-Estava em três lugares — relatório, gráfico de disponibilidade e cálculo de
-disponibilidade — e é o pior tipo de defeito: acertava nos equipamentos que
-nunca mudaram e errava exatamente naqueles sobre os quais o relatório é feito.
-O cálculo virou uma função só, `estado_no_inicio`, com os três casos
-ordenados e testados.
-
 ## Cofre de credenciais
 
 O SNMP é o primeiro módulo que precisa de segredo, e é por isso que o cofre
@@ -771,6 +738,128 @@ tempo constante. O token de sessão entregue ao navegador **não** é o que fica
 no banco: lá fica o SHA-256 dele, então vazamento do banco entrega resumos
 inúteis, não sessões válidas.
 
+## Relatórios
+
+O catálogo é onde se perde ou se ganha a comparação com o SolarWinds, que traz
+**mais de cem** modelos prontos, organizados em Availability, Current Node
+Status, Historical, Top N, Inventory, Events e Capacity Forecasting, com
+agendamento, envio por e-mail e categorias de limitação por usuário.
+
+Aqui são **quinze**, e a aposta não é competir em número: é que cada um
+**declare o que ficou de fora dele**. Um relatório que não declara suas
+ausências é um relatório que vai ser citado errado numa reunião — e uma vez
+citado errado, ninguém mais confia na ferramenta inteira.
+
+| Categoria | Relatórios |
+|---|---|
+| **Disponibilidade** | por frota e função · dia a dia · piores equipamentos · quedas uma a uma |
+| **Capacidade** | previsão de saturação · portas por tráfego e erro |
+| **Desempenho** | qualidade dos enlaces · enlaces instáveis |
+| **Inventário** | cobertura da coleta · o parque |
+| **Eventos** | por gravidade · quem mais falou |
+| **Governança** | alterações · diagnósticos · contradições do cadastro |
+
+### Quedas, uma a uma — o que a decisão de guardar transições comprou
+
+Cada queda vira uma linha com hora de início, hora de volta e duração. Com
+amostragem de minuto em minuto, uma queda de dois minutos apareceria como
+"dois pontos ruins"; aqui aparece como um intervalo com começo e fim exatos.
+
+A queda que ainda não terminou sai com o fim vazio e é dita como tal: fechar a
+duração no instante do relatório inventaria um retorno que não houve.
+
+### Previsão de saturação — o método do SolarWinds, com o aviso junto
+
+Ajusta uma reta ao histórico e diz em quantos dias a porta cruza o limiar. A
+documentação da própria SolarWinds avisa do defeito: *"uses a linear approach…
+a single big change will impact heavily on the trend"*. Uma obra, uma mudança
+de rota, e qualquer degrau vira "satura em quatro dias".
+
+O que este relatório acrescenta é **o tamanho do histórico e a qualidade do
+ajuste na mesma linha do número** — colunas de R² e de confiança, e a regra que
+importa: **a frase de resumo só anuncia uma saturação quando a projeção se
+sustenta.** Com ajuste fraco ela diz outra coisa: *"3 portas têm projeção de
+saturação, e nenhuma delas se sustenta"*. O resumo é a linha que as pessoas
+leem, muitas vezes a única; anunciar "0,7 dias" ali a partir de um R² de 0,15 é
+como o número vira meta de reunião enquanto a ressalva fica na tabela que
+ninguém abriu.
+
+Três casos devolvem "sem data" em vez de um número: já passou do limiar, não
+está crescendo, ou cresce tão devagar que a data cairia fora de qualquer
+horizonte de planejamento. Um número gigante seria tecnicamente certo e
+praticamente uma mentira.
+
+### Enlaces — o relatório que uma ferramenta de nós não faz
+
+Uma plataforma de rede vê nós e portas. Numa malha Rajant o que para a
+operação é o **enlace**, que existe por horas e some quando o caminhão entra na
+cava. Dois relatórios saem de o enlace ser objeto de primeira classe, com
+sujeito próprio e validade:
+
+**Qualidade** traz SNR, sinal, capacidade e custo de cada enlace aberto — e a
+coluna de **assimetria**, a diferença entre o SNR nos dois sentidos. Ela existe
+porque o enlace é dirigido: `A→B` e `B→A` são linhas diferentes porque são
+medições diferentes. Assimetria de 6 dB ou mais raramente é ruído; costuma ser
+antena desalinhada, potência desigual ou obstáculo de um lado só. Uma
+modelagem simétrica faria a média das duas e apagaria justamente o sinal.
+
+**Instabilidade** conta quem mais abriu e fechou. Nenhum equipamento caiu e a
+malha esteve ruim mesmo assim — o modo de falha que um relatório por nó não
+mostra.
+
+### Equipamento-hora, e por que a unidade importa
+
+Somar o tempo fora do ar de 654 equipamentos num dia de 24 h dá 654 "dias".
+Lido como duração isso é absurdo na cara, e foi assim que a primeira versão
+saiu. Não é duração: é **volume de indisponibilidade**, do mesmo jeito que
+homem-hora não é hora. Onde a coluna soma equipamentos diferentes a unidade é
+`equip·h` e está escrita no cabeçalho; onde a linha é de um equipamento só, aí
+sim é duração e sai como `5 d 06 h`.
+
+### Três formatos, uma regra
+
+A ressalva viaja com o dado. O **CSV** leva título, período, parâmetros usados
+e ressalvas em comentário no topo — e os valores **crus**, porque `"94,32%"`
+como texto quebra qualquer fórmula e a planilha existe para se calcular em cima
+dela. A **impressão** leva as ressalvas no rodapé da folha, repete o cabeçalho
+a cada página e não quebra linha no meio.
+
+Não há gerador de PDF aqui de propósito. Toda biblioteca de PDF em Python traz
+peso e superfície de manutenção para resolver um problema que o navegador já
+resolve: `Ctrl+P → salvar como PDF` produz o arquivo com as fontes e a
+paginação do sistema de quem imprime. Uma dependência a menos.
+
+### Parâmetros são do relatório, não da planilha depois
+
+Cada relatório declara seus parâmetros com tipo — frota, zona, quantas linhas,
+limiar de aviso, ordenação — e a tela desenha o controle certo sem conhecer
+relatório nenhum. A recusa nomeia o campo: *"'Quantas linhas': 'muitas' não é
+número"*, porque um `422` sozinho manda a pessoa adivinhar.
+
+A janela também é do relatório. Sete dias serve para disponibilidade e deixa a
+previsão vazia, porque a série é mais nova que a janela — e a tabela vazia
+parecia defeito enquanto a janela padrão era a mesma para todos.
+
+### O defeito que os relatórios revelaram
+
+O estado no início da janela caía no estado **corrente** quando não havia
+transição anterior — ignorando que a primeira transição *dentro* da janela já
+diz de onde veio. Um equipamento que passou 12 h de pé e caiu no meio era
+contado como caído desde o início: **0% em vez de 50%**.
+
+Estava em três lugares — relatório, gráfico de disponibilidade e cálculo de
+disponibilidade — e é o pior tipo de defeito: acertava nos equipamentos que
+nunca mudaram e errava exatamente naqueles sobre os quais o relatório é feito.
+O cálculo virou uma função só, `estado_no_inicio`, com os três casos
+ordenados e testados.
+
+### O que ainda não tem
+
+Agendamento e envio por e-mail, que o SolarWinds tem. Depende de SMTP
+configurado, o que é conversa de infraestrutura junto com o kit de instalação —
+e um relatório que chega por e-mail sem ninguém ter pedido é o começo da pasta
+de filtros que ninguém lê.
+
 ## Exportação para o Prometheus — as 61 métricas viram gráfico
 
 A plataforma guarda a **última** leitura de cada métrica, não a série. Foi
@@ -843,11 +932,21 @@ ninguém lê tráfego nela.
 
 ### O que a medição contra um Prometheus real ensinou
 
-A janela do `rate()` tem piso de 4 minutos, e o número veio de medir. Com
-raspagem de 15 s, uma janela de 60 s devolveu **15,1 MB/s onde o tráfego era
-12,5** — extrapolação a partir de poucas amostras. Com 120 s, 12,95. E com
-raspagem de 60 s, uma janela de 60 s teria um ponto só: o `rate` devolveria
-vazio e o gráfico ficaria em branco sem nada explicar.
+A janela do `rate()` tem piso de 4 minutos, e o número veio de medir. Contra um
+agente SNMP servindo tráfego conhecido — verificado direto no contador, 91,65
+contra 91,00 MB/s configurados, 0,7% de erro —, a janela do `rate` decide a
+fidelidade:
+
+| Janela | Medido | Erro |
+|---|---|---|
+| `[60s]` | 15,11 MB/s | **+20,9%** |
+| `[120s]` | 12,95 MB/s | +3,6% |
+| `[240s]` | 12,09 MB/s | −3,3% |
+| `[600s]` | 12,07 MB/s | −3,4% |
+
+O tráfego real era 12,50 MB/s. E com raspagem de 60 s, uma janela de 60 s teria
+um ponto só: o `rate` devolveria vazio e o gráfico ficaria em branco sem nada
+explicar.
 
 Janela curta não é mais fiel, é mais barulhenta. Errar para o lado do liso
 mostra a tendência certa; errar para o lado do curto mostra um número

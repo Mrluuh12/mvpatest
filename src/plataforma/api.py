@@ -428,24 +428,32 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
 
     @app.get("/api/v1/relatorios", tags=["relatorios"])
     async def listar_relatorios() -> list[dict]:
-        from .db.relatorios import RELATORIOS
+        """O catálogo, agrupado por pergunta e com os parâmetros de cada um.
 
-        return [
-            {"nome": n, "rotulo": d.rotulo, "descricao": d.descricao}
-            for n, d in RELATORIOS.items()
-        ]
+        Relatório que depende do Prometheus vem marcado indisponível **com o
+        motivo**: gerar uma tabela vazia pareceria "não aconteceu nada", que é
+        a mentira mais fácil de contar por omissão.
+        """
+        from . import relatorios
+
+        return relatorios.catalogo(com_series=bool(os.environ.get(VAR_PROMETHEUS)))
 
     @app.get("/api/v1/relatorios/{nome}", tags=["relatorios"])
     async def ver_relatorio(
-        nome: str, janela: str = "7d", formato: str = "json"
+        pedido: Request, nome: str, janela: str = "7d", formato: str = "json",
+        plataforma_sessao: str | None = Cookie(default=None, alias=COOKIE),
     ) -> Response:
         """Um relatório sobre um período — com as ressalvas junto do número.
 
-        O CSV leva as ressalvas em comentário no topo: quem abrir a planilha
-        três semanas depois precisa das mesmas que quem viu a tela.
+        Três formatos, uma regra: a ressalva viaja com o dado. O CSV leva em
+        comentário no topo, a impressão leva no rodapé da folha. Sem isso o
+        número sai da tela sozinho e é citado sozinho.
+
+        Não há gerador de PDF aqui de propósito: a saída de impressão é HTML
+        com folha de página, e o navegador faz o PDF com as fontes de quem
+        imprime. Uma biblioteca a menos para manter.
         """
-        from . import series
-        from .db import relatorios
+        from . import relatorios, series
 
         if fonte._engine is None:
             raise HTTPException(status_code=503, detail="sem banco configurado")
@@ -454,17 +462,27 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
         except series.JanelaInvalida as erro:
             raise HTTPException(status_code=422, detail=str(erro)) from erro
 
+        # Tudo que não é janela nem formato é parâmetro do relatório. Assim um
+        # relatório novo ganha filtro sem que esta rota precise saber dele.
+        brutos = {
+            k: v for k, v in pedido.query_params.items()
+            if k not in {"janela", "formato"}
+        }
         ate = datetime.now(UTC)
         desde = ate - timedelta(seconds=segundos)
         async with fonte._engine.connect() as conexao:
             try:
-                r = await relatorios.gerar(conexao, nome, desde, ate)
+                r = await relatorios.gerar(conexao, nome, desde, ate, brutos)
             except KeyError as erro:
                 raise HTTPException(
                     status_code=404,
                     detail=f"relatório {nome!r} não existe; há "
                     f"{sorted(relatorios.RELATORIOS)}",
                 ) from erro
+            except ValueError as erro:
+                raise HTTPException(status_code=422, detail=str(erro)) from erro
+            except relatorios.capacidade.SemSeries as erro:
+                raise HTTPException(status_code=503, detail=str(erro)) from erro
 
         if formato == "csv":
             return Response(
@@ -474,6 +492,18 @@ def criar_app(repositorio: Repositorio | None = None) -> FastAPI:
                     "content-disposition":
                         f'attachment; filename="{nome}-{ate:%Y%m%d}.csv"'
                 },
+            )
+        if formato == "impressao":
+            quem = ""
+            if plataforma_sessao:
+                from .db import contas
+
+                async with fonte._engine.connect() as conexao:
+                    conta = await contas.resolver(conexao, plataforma_sessao)
+                quem = conta.usuario.nome if conta else ""
+            return Response(
+                content=relatorios.para_impressao(r, gerado_por=quem),
+                media_type="text/html; charset=utf-8",
             )
         return JSONResponse(jsonable_encoder(r.para_json()))
 
