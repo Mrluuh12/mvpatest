@@ -195,3 +195,236 @@ class TestModulo:
 
     async def test_sujeito_da_porta_e_derivavel(self) -> None:
         assert sujeito_da_porta("sw-01", "Gi0/1") == "sw-01/Gi0/1"
+
+
+LLDP = "1.0.8802.1.1.2.1.4.1.1"
+RADIO = {"chave": "nome:ERM-09", "papel": "radio_ptp", "ip": "10.0.0.9"}
+
+
+@pytest.mark.asyncio
+class TestTabelaDeEnlace:
+    """A peça que faltava para um rádio ponto a ponto entrar sem código novo.
+
+    Tabela de portas produz métrica do equipamento; tabela de vizinhança produz
+    **relação** — meia-aresta dirigida, com o medido naquele enlace pendurado
+    nela. Confundir as duas foi o que já fez a ficha de um rádio mostrar "o SNR"
+    de um equipamento que tem um SNR por vizinho.
+    """
+
+    def test_precisa_de_exatamente_uma_coluna_de_identidade(self) -> None:
+        from plataforma.modulos.perfis_snmp import ColunaEnlace, TabelaEnlace
+
+        with pytest.raises(ValueError, match="exatamente uma coluna"):
+            TabelaEnlace(oid=LLDP, colunas=(ColunaEnlace(numero=9, papel="nome"),))
+        with pytest.raises(ValueError, match="exatamente uma coluna"):
+            TabelaEnlace(
+                oid=LLDP,
+                colunas=(
+                    ColunaEnlace(numero=5, papel="identidade"),
+                    ColunaEnlace(numero=6, papel="identidade"),
+                ),
+            )
+
+    def test_coluna_e_medida_ou_papel_nunca_os_dois(self) -> None:
+        from plataforma.modulos.perfis_snmp import ColunaEnlace
+
+        with pytest.raises(ValueError, match="não ambos"):
+            ColunaEnlace(numero=5, papel="identidade", medida="rf_snr_db")
+        with pytest.raises(ValueError, match="nem nenhum"):
+            ColunaEnlace(numero=5)
+
+    def test_medida_de_enlace_passa_pelo_dicionario(self) -> None:
+        from plataforma.modulos.perfis_snmp import ColunaEnlace
+
+        with pytest.raises(ValueError, match="dicionário"):
+            ColunaEnlace(numero=6, medida="snr_do_radio")
+
+    async def test_a_linha_da_tabela_vira_meia_aresta_com_medida(self) -> None:
+        from plataforma.modulos.perfis_snmp import ColunaEnlace, Perfil, TabelaEnlace
+
+        perfil = Perfil(
+            nome="teste", descricao="",
+            enlaces=(
+                TabelaEnlace(
+                    oid=LLDP,
+                    colunas=(
+                        ColunaEnlace(numero=5, papel="identidade"),
+                        ColunaEnlace(numero=9, papel="nome"),
+                        ColunaEnlace(numero=11, medida="rf_snr_db"),
+                    ),
+                ),
+            ),
+        )
+        s = SessaoFalsa(tabelas={LLDP: {
+            "0.1.1": {5: b"\x00\x04\x07\x00\x85\x90", 9: "ERM-05", 11: 27},
+        }})
+        c = await colher(s, RADIO, perfil)
+        (rel,) = c.relacoes
+        assert rel.origem == "nome:ERM-09"
+        assert rel.destino == "mac:00:04:07:00:85:90"
+        assert rel.medidas == {"rf_snr_db": 27.0}
+        assert rel.atributos["nome_do_vizinho"] == "ERM-05"
+
+    async def test_vizinho_sem_identidade_nao_vira_aresta(self) -> None:
+        """Aresta para um equipamento inventado é pior que aresta ausente."""
+        from plataforma.modulos.perfis_snmp import ColunaEnlace, Perfil, TabelaEnlace
+
+        perfil = Perfil(
+            nome="t", descricao="",
+            enlaces=(TabelaEnlace(
+                oid=LLDP, colunas=(ColunaEnlace(numero=5, papel="identidade"),)
+            ),),
+        )
+        s = SessaoFalsa(tabelas={LLDP: {"1": {5: ""}, "2": {}}})
+        c = await colher(s, RADIO, perfil)
+        assert c.relacoes == []
+
+    async def test_vizinhanca_que_falhou_e_marcada_parcial(self) -> None:
+        """Vizinhança não lida não autoriza fechar aresta: ausência aí quer
+        dizer "não perguntei", não "deixou de existir"."""
+        from plataforma.modulos.perfis_snmp import ColunaEnlace, Perfil, TabelaEnlace
+
+        perfil = Perfil(
+            nome="t", descricao="",
+            enlaces=(TabelaEnlace(
+                oid=LLDP, colunas=(ColunaEnlace(numero=5, papel="identidade"),)
+            ),),
+        )
+        c = await colher(SessaoFalsa(quebrar={LLDP}), RADIO, perfil)
+        assert c.vizinhanca_parcial is True
+        assert any("vizinhança" in f.motivo for f in c.falhas)
+
+
+class TestIdentidadeDoVizinho:
+    """O defeito que só um agente de verdade mostrou.
+
+    ``lldpRemChassisId`` não chega como ``bytes``: chega como ``OctetString`` do
+    pysnmp. Passar isso por ``str()`` decodifica os seis octetos do MAC como se
+    fossem texto, e o vizinho ``00:04:07:00:85:90`` virava identidade vazia.
+    """
+
+    def test_octetstring_do_pysnmp_vira_mac(self) -> None:
+        from pysnmp.proto.api import v2c
+
+        from plataforma.modulos.snmp import identidade_do_vizinho
+
+        bruto = v2c.OctetString(b"\x00\x04\x07\x00\x85\x90")
+        assert identidade_do_vizinho(bruto) == "mac:00:04:07:00:85:90"
+
+    @pytest.mark.parametrize(
+        "bruto",
+        [b"\x00\x04\x07\x00\x85\x90", "00:04:07:00:85:90", "00-04-07-00-85-90",
+         "0x000407008590", "000407008590"],
+    )
+    def test_as_quatro_formas_de_escrever_um_mac_dao_a_mesma_identidade(
+        self, bruto
+    ) -> None:
+        from plataforma.modulos.snmp import identidade_do_vizinho
+
+        assert identidade_do_vizinho(bruto) == "mac:00:04:07:00:85:90"
+
+    def test_nome_de_sistema_vira_identidade_por_nome(self) -> None:
+        from plataforma.modulos.snmp import identidade_do_vizinho
+
+        assert identidade_do_vizinho("ERM-05-RADIO") == "nome:ERM-05-RADIO"
+
+    @pytest.mark.parametrize("vazio", [None, "", "   "])
+    def test_vazio_nao_vira_identidade(self, vazio) -> None:
+        from plataforma.modulos.snmp import identidade_do_vizinho
+
+        assert identidade_do_vizinho(vazio) is None
+
+
+@pytest.mark.asyncio
+class TestVizinhancaCompleta:
+    """``relacoes_completas`` é a permissão para fechar aresta. Nega por
+    omissão, como o resto da plataforma."""
+
+    async def test_so_e_completa_quando_todo_alvo_respondeu(self) -> None:
+        from plataforma.modulos.perfis_snmp import PONTO_A_PONTO
+
+        s = SessaoFalsa(
+            escalares={SYS_UPTIME: 100},
+            tabelas={LLDP: {"1": {5: b"\x00\x04\x07\x00\x85\x90"}}},
+        )
+        mod = ModuloSnmp(s)
+        r = await mod.coletar([RADIO])
+        assert r.relacoes_completas is True
+        assert len(r.relacoes) == 1
+        assert PONTO_A_PONTO.enlaces, "o perfil de PtP declara vizinhança"
+
+    async def test_alvo_mudo_torna_a_vizinhanca_parcial(self) -> None:
+        s = SessaoFalsa(quebrar={"escalares"})
+        r = await ModuloSnmp(s).coletar([RADIO])
+        assert r.relacoes_completas is False
+        assert r.alvos_falha == 1
+
+    async def test_sem_alvo_nenhum_nao_e_vizinhanca_completa(self) -> None:
+        """Zero alvos e zero relações fechariam a malha inteira se isso
+        contasse como leitura completa."""
+        r = await ModuloSnmp(SessaoFalsa()).coletar([])
+        assert r.relacoes_completas is False
+
+
+class TestFerramentaDoWalk:
+    """A ferramenta que faz "acrescentar equipamento é configuração" custar
+    minutos em vez de uma MIB que ninguém acha."""
+
+    def _tool(self):
+        """A ferramenta é um script, não um pacote: carrega por caminho.
+
+        O registro em ``sys.modules`` antes de executar não é cerimônia — sem
+        ele o ``@dataclass`` do próprio arquivo não consegue resolver o módulo
+        em que foi declarado e estoura.
+        """
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        if "perfil_do_walk" in sys.modules:
+            return sys.modules["perfil_do_walk"]
+        caminho = Path(__file__).resolve().parents[1] / "ferramentas/perfil_do_walk.py"
+        spec = importlib.util.spec_from_file_location("perfil_do_walk", caminho)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_acha_tabela_com_indice_de_tres_partes(self) -> None:
+        """A ``lldpRemTable`` é indexada por três componentes. A primeira versão
+        parava no primeiro corte que desse um número e por isso só achava
+        tabelas de índice simples — justo a de vizinhança passava batido."""
+        t = self._tool()
+        linhas = []
+        for idx in ("0.1.1", "0.2.1"):
+            linhas += [
+                (f"1.0.8802.1.1.2.1.4.1.1.5.{idx}", "Hex-STRING", "00 04 07 00 85 90"),
+                (f"1.0.8802.1.1.2.1.4.1.1.9.{idx}", "STRING", "ERM-05"),
+            ]
+        achadas = t.agrupar(linhas, 2)
+        assert "1.0.8802.1.1.2.1.4.1.1" in achadas
+        assert sorted(achadas["1.0.8802.1.1.2.1.4.1.1"]) == [5, 9]
+
+    def test_escalar_nao_vira_tabela(self) -> None:
+        t = self._tool()
+        assert t.agrupar([("1.3.6.1.2.1.1.3.0", "Timeticks", "1")], 2) == {}
+
+    def test_a_coluna_de_mac_e_apontada_como_identidade(self) -> None:
+        t = self._tool()
+        col = t.Coluna(numero=5, tipos={"Hex-STRING"}, amostras=["00 04 07 00 85 90"])
+        assert t.parece_identidade(col)
+        assert not t.parece_identidade(
+            t.Coluna(numero=11, tipos={"INTEGER"}, amostras=["27"])
+        )
+
+    def test_a_medida_sai_comentada_porque_o_nome_e_decisao(self) -> None:
+        """O dicionário canônico recusa nome inventado, e é assim que se
+        descobre que falta decidir o nome antes de coletar."""
+        t = self._tool()
+        cols = {
+            5: t.Coluna(numero=5, tipos={"Hex-STRING"}, amostras=["00 04 07 00 85 90"]),
+            11: t.Coluna(numero=11, tipos={"INTEGER"}, amostras=["27"]),
+        }
+        texto = t.esqueleto("1.2.3", cols)
+        assert 'ColunaEnlace(numero=5, papel="identidade")' in texto
+        assert "# ColunaEnlace(numero=11" in texto

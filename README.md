@@ -654,6 +654,82 @@ export PLATAFORMA_CHAVE=$(python -c \
 export PLATAFORMA_SNMP_CREDENCIAL=snmp-mina
 ```
 
+## Rádio ponto a ponto: enlace sem código novo
+
+O perfil SNMP prometia que *"acrescentar um tipo de equipamento é
+configuração, não código"*. A promessa valia para métrica e não valia para
+enlace: a tabela de portas produzia número do equipamento, e não havia como
+declarar uma tabela cujas linhas são **vizinhos**. Num rádio ponto a ponto é
+justamente o vizinho que interessa.
+
+`TabelaEnlace` fecha isso. Uma tabela de vizinhança vira meia-aresta dirigida,
+com o que foi medido naquele enlace pendurado nela — o mesmo formato que o
+módulo Rajant já produz, então o enlace PtP entra no grafo, no mapa e na aba
+Rede sem uma linha de tela nova.
+
+```python
+TabelaEnlace(
+    oid="1.0.8802.1.1.2.1.4.1.1",          # lldpRemTable
+    tipo=TipoAresta.ENLACE_FISICO,
+    colunas=(
+        ColunaEnlace(numero=5, papel="identidade"),   # lldpRemChassisId
+        ColunaEnlace(numero=9, papel="nome"),         # lldpRemSysName
+    ),
+)
+```
+
+Exatamente uma coluna de identidade, sempre: sem saber com quem, a medida não
+tem onde morar. E coluna é medida **ou** papel, nunca as duas — SNR de um
+enlace não é "o SNR do rádio", é o SNR daquele par.
+
+### O que este perfil não traz, e por quê
+
+SNR, potência recebida e taxa de modulação são o que mais interessa num rádio
+Astra/InfiNet, e vivem na árvore MINT do fabricante. **Esses OIDs não estão
+aqui.** As MIBs da InfiNet não são alcançáveis da rede deste ambiente, e OID
+chutado produz um módulo que parece pronto e não coleta nada — o pior defeito
+possível, porque a tela diz que a família está coberta.
+
+O que entra hoje é o que é padrão e foi verificado contra um agente real:
+`sysUpTime`, o estado das interfaces, e a **vizinhança por LLDP** (IEEE
+802.1AB). Com isso o enlace já aparece no grafo, com nome e identidade do
+outro lado — falta a medida de rádio, não o enlace.
+
+### A ferramenta que fecha a lacuna em minutos
+
+`ferramentas/perfil_do_walk.py` lê um `snmpwalk` e escreve o rascunho do
+perfil:
+
+```
+snmpwalk -v2c -c publica -On 10.188.96.40 1.3.6.1.4.1.3942 > astra.walk
+python3 ferramentas/perfil_do_walk.py astra.walk --esqueleto <entry>
+```
+
+Ela acha as tabelas pela estrutura do SNMP e aponta a coluna que parece ser a
+identidade do vizinho. As medidas saem **comentadas** de propósito: o nome
+canônico é decisão, não dedução, e o dicionário recusa nome inventado — é
+assim que se descobre que falta decidir o nome antes de coletar.
+
+A primeira versão dela só achava tabela de índice simples, porque parava no
+primeiro corte que desse um número. A `lldpRemTable` é indexada por três
+componentes, e justo a tabela de vizinhança passava batido. O critério que
+funciona é a assinatura de uma tabela de verdade: **todas as colunas
+compartilham o mesmo conjunto de índices.**
+
+### O defeito que só o agente real mostrou
+
+Contra um rádio de mentira servindo LLDP, os dois vizinhos vieram como
+`nome:` (vazio) e `nome:tâGW`. O `lldpRemChassisId` não chega como `bytes`:
+chega como `OctetString` do pysnmp, e passar isso por `str()` decodifica os
+seis octetos do MAC como se fossem texto. Agora os octetos são pedidos ao
+objeto antes de qualquer conversão, e as quatro formas de escrever um MAC —
+octetos crus, `00:04:07:00:85:90`, `00-04-...`, `0x000407008590` — dão a mesma
+identidade.
+
+Verificado ponta a ponta contra o inventário real: o módulo coletou de
+`ERB-02-BASE ASTRA`, e duas arestas `enlace_fisico` entraram no grafo já
+resolvidas para chaves do cadastro.
+
 ## Módulo SNMP declarativo (marco M3)
 
 O módulo não conhece fabricante nenhum: executa um **perfil**, que diz quais
@@ -1127,10 +1203,11 @@ porque a diferença entre eles era exatamente o tamanho do defeito.
 
 ## O que ainda não está aqui
 
-- Módulos de outros fabricantes: Astra/InfiNet (18 rádios PtP/PtMP), MEMS
-  Michelin (46 gateways de pneu), PTX (97 IHM de bordo). Enquanto eles não
-  existem, a seção Rede mostra só a malha Rajant — o enlace PtP de rádio
-  RADWIN/Astra tem o mesmo formato e entra sem mudar tela.
+- **As medidas de rádio da Astra/InfiNet.** A vizinhança dos 18 PtP/PtMP já
+  entra por LLDP; o que falta é SNR, potência e modulação, que estão na árvore
+  MINT do fabricante. Um `snmpwalk` contra um rádio e a ferramenta do walk
+  resolvem — o que não dá é inventar os OIDs.
+- Módulos para MEMS Michelin (46 gateways de pneu) e PTX (97 IHM de bordo)
 - Backup e comparação de configuração de switches (o NCM do SolarWinds)
 - Qual porta do switch tem qual MAC (o UDT do SolarWinds)
 - Gráfico com mais de uma série sobreposta (o PerfStack do SolarWinds). Hoje

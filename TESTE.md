@@ -145,6 +145,32 @@ export PLATAFORMA_SNMP_CREDENCIAL=snmp-mina
 python -m plataforma.coletor --zona corporativa --uma-vez --modulo snmp
 ```
 
+### 5.3.1 Rádios ponto a ponto e vizinhança
+
+Os papéis `radio_ptp` e `radio_ptmp` usam um perfil próprio: interfaces mais a
+tabela LLDP, de onde sai **com quem cada rádio está falando**. Switch e
+roteador também leem LLDP, e daí sai a topologia cabeada.
+
+Para conferir num rádio antes de cadastrar:
+
+```bash
+snmpwalk -v2c -c SUA_COMUNIDADE -On IP_DO_RADIO 1.0.8802.1.1.2.1.4.1.1
+```
+
+Vindo tabela, o enlace vai aparecer no grafo no primeiro ciclo.
+
+**As medidas de rádio (SNR, potência, modulação) não vêm por padrão**: estão em
+MIB de fabricante e não foram lidas de um equipamento real. Para acrescentá-las:
+
+```bash
+snmpwalk -v2c -c SUA_COMUNIDADE -On IP_DO_RADIO 1.3.6.1.4.1.3942 > astra.walk
+python3 ferramentas/perfil_do_walk.py astra.walk
+python3 ferramentas/perfil_do_walk.py astra.walk --esqueleto ENTRY_DA_TABELA
+```
+
+Cole o bloco em `perfis_snmp.py` e escolha o nome canônico de cada medida. O
+dicionário recusa nome inventado — se recusar, é porque falta decidir o nome.
+
 ### 5.4 Syslog e traps — o canal que escuta em vez de perguntar
 
 Todo o resto é *pull*. Este é *push*: o equipamento manda quando quer.
