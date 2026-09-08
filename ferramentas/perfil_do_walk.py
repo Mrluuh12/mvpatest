@@ -46,8 +46,11 @@ from dataclasses import dataclass, field
 #: O prefixo até o `::` é descartado em vez de a linha ser ignorada: esquecer o
 #: `-On` é o erro mais comum, e recusar o arquivo inteiro por isso só faz a
 #: pessoa achar que o equipamento não respondeu.
+#: ``iso`` **é** o OID 1: descartar o prefixo comia o primeiro número de todos
+#: os OIDs e deslocava a árvore inteira em silêncio. Ele é capturado e
+#: traduzido, não jogado fora.
 LINHA = re.compile(
-    r"^\.?(?:[A-Za-z][\w-]*::)?(?:iso\.)?(?P<oid>[\d.]+)"
+    r"^\.?(?:[A-Za-z][\w-]*::)?(?P<iso>iso\.)?(?P<oid>[\d.]+)"
     r"\s*=\s*(?P<tipo>[A-Za-z0-9-]+):?\s*(?P<valor>.*)$"
 )
 
@@ -136,7 +139,11 @@ def ler(caminho: str) -> list[tuple[str, str, str]]:
 
 def interpretar(linhas) -> list[tuple[str, str, str]]:
     return [
-        (casa["oid"], casa["tipo"], casa["valor"].strip())
+        (
+            ("1." + casa["oid"]) if casa["iso"] else casa["oid"],
+            casa["tipo"],
+            casa["valor"].strip(),
+        )
         for linha in linhas
         if (casa := LINHA.match(linha.strip()))
     ]
