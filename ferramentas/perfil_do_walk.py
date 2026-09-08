@@ -17,13 +17,14 @@ isso, porque adivinhar aqui é como um número vira métrica errada.
 Como usar
 ---------
 
-No rádio (somente leitura, comunidade de leitura):
+Falando direto com o rádio (não precisa de snmpwalk instalado):
+
+    python3 perfil_do_walk.py --radio 10.188.96.40 --comunidade publica
+
+Ou a partir de um arquivo, se você já tem a saída do snmpwalk:
 
     snmpwalk -v2c -c publica -On 10.188.96.40 1.3.6.1.4.1.3942 > astra.walk
-
-Aqui:
-
-    python3 ferramentas/perfil_do_walk.py astra.walk --minimo 2
+    python3 perfil_do_walk.py astra.walk
 
 Ele imprime as tabelas achadas, uma amostra por coluna, e um bloco de perfil
 para colar em ``perfis_snmp.py``. As métricas saem comentadas de propósito: o
@@ -40,7 +41,15 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 #: `snmpwalk -On` imprime `.1.3.6.1.2.1.1.3.0 = Timeticks: (1234) 0:00:12.34`.
-LINHA = re.compile(r"^\.?(?P<oid>[\d.]+)\s*=\s*(?P<tipo>[A-Za-z0-9-]+):?\s*(?P<valor>.*)$")
+#:
+#: Sem o `-On` ele resolve nomes e imprime `SNMPv2-SMI::iso.0.8802.1... = ...`.
+#: O prefixo até o `::` é descartado em vez de a linha ser ignorada: esquecer o
+#: `-On` é o erro mais comum, e recusar o arquivo inteiro por isso só faz a
+#: pessoa achar que o equipamento não respondeu.
+LINHA = re.compile(
+    r"^\.?(?:[A-Za-z][\w-]*::)?(?:iso\.)?(?P<oid>[\d.]+)"
+    r"\s*=\s*(?P<tipo>[A-Za-z0-9-]+):?\s*(?P<valor>.*)$"
+)
 
 
 @dataclass
@@ -55,6 +64,64 @@ class Coluna:
         return f"{'/'.join(sorted(self.tipos)):14} {amostra[:60]}"
 
 
+RAIZ_PADRAO = "1.3.6.1.4.1.3942"
+
+
+async def _percorrer(ip: str, comunidade: str, raiz: str, porta: int) -> list[str]:
+    """Percorre a árvore do equipamento e devolve linhas no formato do snmpwalk.
+
+    Existe para tirar a dependência do ``snmpwalk``, que não vem no Windows —
+    e a máquina de quem opera a mina é Windows. Uma ferramenta que exige
+    instalar Net-SNMP antes de começar é uma ferramenta que não se usa.
+    """
+    from pysnmp.hlapi.v3arch.asyncio import (
+        CommunityData,
+        ContextData,
+        ObjectIdentity,
+        ObjectType,
+        SnmpEngine,
+        UdpTransportTarget,
+        bulk_walk_cmd,
+    )
+
+    motor = SnmpEngine()
+    destino = await UdpTransportTarget.create((ip, porta), timeout=3, retries=1)
+    saida: list[str] = []
+    async for erro, estado, indice, binds in bulk_walk_cmd(
+        motor, CommunityData(comunidade, mpModel=1), destino, ContextData(),
+        0, 25, ObjectType(ObjectIdentity(raiz)), lexicographicMode=False,
+    ):
+        if erro:
+            raise RuntimeError(str(erro))
+        if estado:
+            raise RuntimeError(f"{estado.prettyPrint()} no índice {indice}")
+        for oid, valor in binds:
+            # `prettyPrint()` resolve nomes de MIB e devolve
+            # `SNMPv2-SMI::iso.0.8802...`. O que serve aqui é o OID numérico.
+            saida.append(f".{numerico(oid)} = {_como_snmpwalk(valor)}")
+    return saida
+
+
+def numerico(oid) -> str:
+    """O OID em pontos, sem nome de MIB pelo meio."""
+    for acessor in ("get_oid", "getOid"):
+        if callable(metodo := getattr(oid, acessor, None)):
+            return str(metodo())
+    return str(oid)
+
+
+def _como_snmpwalk(valor) -> str:
+    """Formata como o ``snmpwalk -On`` faria, para o resto do código não saber
+    de onde a linha veio."""
+    octetos = getattr(valor, "asOctets", None)
+    if callable(octetos):
+        bytes_ = octetos()
+        if all(32 <= b < 127 for b in bytes_):
+            return f'STRING: "{bytes_.decode()}"'
+        return "Hex-STRING: " + " ".join(f"{b:02X}" for b in bytes_)
+    return f"{type(valor).__name__}: {valor.prettyPrint()}"
+
+
 def _linhas(caminho: str):
     if caminho == "-":
         yield from sys.stdin
@@ -64,9 +131,13 @@ def _linhas(caminho: str):
 
 
 def ler(caminho: str) -> list[tuple[str, str, str]]:
+    return interpretar(_linhas(caminho))
+
+
+def interpretar(linhas) -> list[tuple[str, str, str]]:
     return [
         (casa["oid"], casa["tipo"], casa["valor"].strip())
-        for linha in _linhas(caminho)
+        for linha in linhas
         if (casa := LINHA.match(linha.strip()))
     ]
 
@@ -125,6 +196,15 @@ def agrupar(entradas: list[tuple[str, str, str]], minimo: int) -> dict[str, dict
     }
 
 
+#: O snmpwalk escreve `INTEGER`, o pysnmp escreve `Integer`. Os dois caminhos
+#: precisam classificar a coluna igual, ou o mesmo equipamento gera perfis
+#: diferentes conforme quem leu.
+TIPOS_NUMERICOS = frozenset({
+    "INTEGER", "Integer", "Integer32", "Gauge32", "Gauge", "Unsigned32",
+    "Counter32", "Counter64", "Counter", "TimeTicks", "Timeticks",
+})
+
+
 def parece_identidade(col: Coluna) -> bool:
     """Coluna que parece identificar o vizinho: MAC ou nome de sistema."""
     if col.tipos & {"Hex-STRING"}:
@@ -148,7 +228,7 @@ def esqueleto(entrada: str, cols: dict[int, Coluna]) -> str:
         col = cols[numero]
         if parece_identidade(col):
             partes.append(f'        ColunaEnlace(numero={numero}, papel="identidade"),')
-        elif col.tipos & {"INTEGER", "Gauge32", "Counter32", "Counter64"}:
+        elif col.tipos & TIPOS_NUMERICOS:
             partes.append(
                 f"        # ColunaEnlace(numero={numero}, medida=\"?\"),"
                 f"  # {col.resumo()}"
@@ -164,16 +244,69 @@ def esqueleto(entrada: str, cols: dict[int, Coluna]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("walk", help="arquivo com a saída do snmpwalk -On, ou - para a entrada padrão")
+    p.add_argument("walk", nargs="?",
+                   help="arquivo com a saída do snmpwalk -On, ou - para a entrada padrão")
+    p.add_argument("--radio", metavar="IP",
+                   help="fala direto com o equipamento, sem precisar de snmpwalk")
+    p.add_argument("--comunidade", default="public",
+                   help="comunidade de leitura (padrão: public)")
+    p.add_argument("--raiz", default=RAIZ_PADRAO,
+                   help=f"ramo a percorrer (padrão: {RAIZ_PADRAO}, a árvore da InfiNet)")
+    p.add_argument("--porta", type=int, default=161)
+    p.add_argument("--salvar", metavar="ARQUIVO",
+                   help="grava o walk lido do rádio, para reusar depois")
     p.add_argument("--minimo", type=int, default=2,
                    help="quantas colunas e linhas para considerar tabela (padrão: 2)")
     p.add_argument("--esqueleto", metavar="OID",
                    help="imprime o rascunho de TabelaEnlace para esta entrada")
     args = p.parse_args(argv)
 
-    entradas = ler(args.walk)
+    if not args.radio and not args.walk:
+        p.error("informe um arquivo de walk, ou --radio IP para ler do equipamento")
+
+    if args.radio:
+        try:
+            import asyncio
+        except ImportError:  # pragma: no cover
+            return 1
+        try:
+            linhas = asyncio.run(
+                _percorrer(args.radio, args.comunidade, args.raiz, args.porta)
+            )
+        except ImportError:
+            print(
+                "para ler direto do rádio é preciso o pysnmp:\n"
+                "    pip install pysnmp\n"
+                "Ou gere o arquivo com snmpwalk e passe o caminho dele.",
+                file=sys.stderr,
+            )
+            return 1
+        except Exception as erro:  # noqa: BLE001
+            print(f"não deu para ler {args.radio}: {erro}", file=sys.stderr)
+            return 1
+        if args.salvar:
+            with open(args.salvar, "w", encoding="utf-8") as f:
+                f.write("\n".join(linhas) + "\n")
+            print(f"walk salvo em {args.salvar}")
+        entradas = interpretar(linhas)
+    else:
+        try:
+            entradas = ler(args.walk)
+        except FileNotFoundError:
+            print(
+                f"arquivo {args.walk!r} não existe nesta pasta.\n"
+                "Ou gere ele antes com snmpwalk, ou leia direto do equipamento:\n"
+                f"    python3 {sys.argv[0]} --radio IP_DO_RADIO --comunidade SUA_COMUNIDADE",
+                file=sys.stderr,
+            )
+            return 1
+
     if not entradas:
-        print("nada reconhecido: o walk foi feito com -On?", file=sys.stderr)
+        print(
+            "nada reconhecido. Se veio de arquivo, o walk foi feito com -On? "
+            "Se veio do rádio, este ramo pode estar vazio — tente --raiz 1.3.6.1",
+            file=sys.stderr,
+        )
         return 1
     print(f"{len(entradas)} objetos lidos")
     tabelas = agrupar(entradas, args.minimo)

@@ -428,3 +428,29 @@ class TestFerramentaDoWalk:
         texto = t.esqueleto("1.2.3", cols)
         assert 'ColunaEnlace(numero=5, papel="identidade")' in texto
         assert "# ColunaEnlace(numero=11" in texto
+
+    def test_le_walk_sem_On_em_vez_de_recusar_o_arquivo(self) -> None:
+        """Esquecer o `-On` é o erro mais comum, e o snmpwalk então imprime
+        `SNMPv2-SMI::iso.0.8802...`. Recusar o arquivo inteiro por isso faz a
+        pessoa achar que o equipamento não respondeu."""
+        t = self._tool()
+        linhas = [
+            ".SNMPv2-SMI::iso.0.8802.1.1.2.1.4.1.1.5.0.1.1 = Hex-STRING: 00 04 07 00 85 90",
+            ".1.3.6.1.2.1.1.3.0 = Timeticks: (100) 0:00:01.00",
+        ]
+        lidas = t.interpretar(linhas)
+        assert [o for o, _, _ in lidas] == [
+            "1.0.8802.1.1.2.1.4.1.1.5.0.1.1", "1.3.6.1.2.1.1.3.0"
+        ]
+
+    def test_os_dois_caminhos_classificam_o_numero_igual(self) -> None:
+        """O snmpwalk escreve `INTEGER`, o pysnmp escreve `Integer`. Se só um
+        contasse como numérico, o mesmo equipamento geraria perfis diferentes
+        conforme quem leu."""
+        t = self._tool()
+        for tipo in ("INTEGER", "Integer", "Gauge32", "Counter64"):
+            cols = {
+                5: t.Coluna(numero=5, tipos={"Hex-STRING"}, amostras=["00 04 07 00 85 90"]),
+                11: t.Coluna(numero=11, tipos={tipo}, amostras=["27"]),
+            }
+            assert 'ColunaEnlace(numero=11, medida="?")' in t.esqueleto("1.2.3", cols), tipo
