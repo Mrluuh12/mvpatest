@@ -1,0 +1,30 @@
+# executaveis e artefatos de build
+*.exe
+dist/
+build/
+# zips de entrega: sao remontados a partir da arvore
+*.zip
+
+# gerado por ptx/compilar.sh a partir de ptx/interface.html
+ptx/Pagina.cs
+
+# O banco de producao nao entra no repo: o servidor le' ele do DISPATCH.
+# Para rodar os testes contra o banco de verdade:
+#   MINA_DB=/caminho/Modular.db sh rodar_testes.sh
+dados/Modular.db
+*.db
+
+# senha dos radios Rajant nunca entra no repo
+rajant.json
+config.json
+
+# dados de operacao gerados em producao
+desmontes.json
+servidor.log*
+
+# a semente do app Android vai versionada de proposito: sem ela o APK abre
+# sem mapa nenhum ate' alcancar o servidor
+!android/app/src/main/assets/semente/
+
+__pycache__/
+*.pyc

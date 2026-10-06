@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  O servidor de rotas fala HTTP simples na rede da mina, e desde o Android 9
+  o cleartext e' bloqueado por padrao.
+
+  Aqui vai so' o base-config. A tentacao e' restringir por <domain>, mas
+  <domain> espera NOME de host: o servidor da mina e' um IP, e IP em <domain>
+  nao e' o que essa tag faz. A versao anterior tentava isso e ainda punha o
+  base-config depois do domain-config, fora da ordem que o schema exige — o
+  parser roda quando o processo sobe, entao o app fechava antes de abrir.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

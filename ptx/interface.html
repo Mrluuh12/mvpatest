@@ -1,0 +1,1728 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Navegacao da mina</title>
+<!--
+  Interface de navegacao do PTX.
+
+  Sem CDN, sem internet, sem biblioteca: canvas puro.
+  ES5 e XMLHttpRequest de proposito — o navegador do terminal pode ser um
+  WebKit antigo, e a interface nao pode depender de recurso moderno.
+
+  Este arquivo e' embutido no PtxNav.exe pelo compilar.sh.
+-->
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;
+  -webkit-user-select:none;user-select:none}
+html,body{margin:0;height:100%;overflow:hidden;
+  font-family:"DejaVu Sans",Verdana,sans-serif;font-size:16px}
+
+/* alto contraste: noite (padrao) e dia. O operador troca no botao. */
+body{background:#000;color:#fff}
+body.dia{background:#f2f2f2;color:#000}
+
+#tela{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;display:block}
+
+/* --- barra de cima: escolha do destino --------------------------------- */
+#topo{position:absolute;top:0;left:0;right:0;z-index:5;display:flex;gap:10px;
+  padding:10px;background:rgba(0,0,0,.88);border-bottom:2px solid #444}
+body.dia #topo{background:rgba(255,255,255,.94);border-bottom:2px solid #999}
+
+select,button{font-family:inherit;font-size:20px;font-weight:bold;
+  min-height:56px;border-radius:10px;border:2px solid #555}
+select{flex:1;min-width:0;padding:0 10px;background:#1a1a1a;color:#fff}
+body.dia select{background:#fff;color:#000;border-color:#666}
+button{min-width:56px;padding:0 20px;background:#0a7d55;color:#fff;border-color:#0f9;}
+body.dia button{background:#0a6b48;color:#fff;border-color:#064}
+button:disabled{background:#333;color:#888;border-color:#444}
+#limpar{background:#8c2323;border-color:#f55}
+
+/* --- botoes laterais --------------------------------------------------- */
+#lateral{position:absolute;right:10px;z-index:5;display:flex;flex-direction:column;gap:12px}
+#lateral button{width:64px;height:64px;padding:0;font-size:26px;
+  background:#222;color:#fff;border-color:#666}
+body.dia #lateral button{background:#fff;color:#000;border-color:#666}
+
+/* --- avisos ------------------------------------------------------------ */
+#avisos{position:absolute;left:10px;right:10px;z-index:6;pointer-events:none}
+.aviso{margin-bottom:8px;padding:12px 14px;border-radius:10px;font-size:19px;
+  font-weight:bold;background:#7a1414;color:#fff;border:2px solid #ff5252}
+.aviso.ok{background:#5a4a00;border-color:#fc0;color:#fff}
+
+/* --- rodape: distancia ------------------------------------------------- */
+#rodape{position:absolute;left:0;right:0;bottom:0;z-index:5;padding:12px 16px;
+  background:rgba(0,0,0,.9);border-top:2px solid #444;display:none}
+body.dia #rodape{background:rgba(255,255,255,.95);border-top:2px solid #999}
+#dist{font-size:52px;font-weight:bold;line-height:1}
+#sub{font-size:18px;margin-top:6px;color:#bbb}
+body.dia #sub{color:#333}
+
+/* --- faixa de movimento -----------------------------------------------
+   Antes isto cobria a tela inteira: em movimento so' havia seta e distancia,
+   e o mapa sumia. Quem dirige quer se ver andando, com o zoom que escolheu.
+   A faixa fica por cima do mapa, grande o bastante para ler de relance, e a
+   trava dos controles continua igual — o que nao pode e' mexer, nao e' ver. */
+#movimento{position:absolute;top:0;left:0;right:0;z-index:8;display:none;
+  background:#000;color:#fff;padding:10px 14px;
+  border-bottom:2px solid #234;
+  display:none;align-items:center;gap:16px}
+body.dia #movimento{background:#f2f2f2;color:#000;border-bottom-color:#bbb}
+#mvSeta{flex:0 0 auto}
+#mvTexto{flex:1 1 auto;min-width:0;line-height:1}
+#mvDist{font-size:56px;font-weight:bold;line-height:1;display:inline}
+#mvUnid{font-size:20px;font-weight:bold;color:#bbb;display:inline;margin-left:6px}
+body.dia #mvUnid{color:#333}
+#mvDestino{font-size:22px;font-weight:bold;margin-top:4px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#mvNota{font-size:14px;color:#9ab;margin-top:2px}
+body.dia #mvNota{color:#456}
+
+/* --- abertura: o operador sobe no equipamento e ve' de cara se da' para
+   navegar, em vez de descobrir isso pelo mapa vazio --- */
+#abertura{position:absolute;top:0;left:0;right:0;bottom:0;z-index:20;
+  background:#000;color:#fff;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;padding:4vh 6vw;text-align:center}
+body.dia #abertura{background:#f2f2f2;color:#000}
+#abTitulo{font-size:7vh;font-weight:bold;line-height:1.1}
+#abSub{font-size:3.4vh;color:#8ac;margin-top:1vh;letter-spacing:.06em}
+#abEquip{font-size:4.2vh;font-weight:bold;margin-top:3vh}
+#abChecagem{margin-top:4vh;font-size:3vh;text-align:left;min-width:60vw}
+#abChecagem div{margin:1.4vh 0;display:flex;gap:2vw;align-items:center}
+.marca{width:1.6em;text-align:center;font-weight:bold}
+.marca.ok{color:#3d6}
+.marca.ruim{color:#f55}
+.marca.espera{color:#fa0}
+#abEntrar{margin-top:5vh;font-size:3.6vh;padding:2.4vh 8vw}
+#abNota{margin-top:2vh;font-size:2.4vh;color:#888}
+
+/* --- menu --- */
+#btMenu{width:64px;height:64px;font-size:30px;padding:0}
+#menu{position:absolute;top:0;right:0;bottom:0;width:min(94vw,480px);z-index:15;
+  background:#0d0d0d;border-left:2px solid #333;display:none;overflow:auto}
+body.dia #menu{background:#fafafa;border-left-color:#bbb}
+#mnTopo{position:sticky;top:0;background:#181818;padding:16px 18px;
+  border-bottom:2px solid #333;display:flex;align-items:center;gap:12px}
+body.dia #mnTopo{background:#eaeaea;border-bottom-color:#bbb}
+#mnTopo .quem{flex:1;font-size:22px;font-weight:bold;letter-spacing:.02em}
+#mnTopo .fechar{width:56px;height:56px;font-size:26px;padding:0;background:#333}
+#menu section{padding:8px 14px 18px}
+#menu h3{margin:14px 4px 10px;font-size:13px;letter-spacing:.14em;color:#7a8a99;
+  text-transform:uppercase;font-weight:bold}
+body.dia #menu h3{color:#5a6a79}
+#menu .item{display:flex;align-items:center;gap:12px;padding:0 14px;
+  border-radius:10px;background:#1a1a1a;margin-bottom:8px;min-height:64px}
+body.dia #menu .item{background:#eee}
+#menu .item .rot{flex:1;font-size:19px;font-weight:bold}
+#menu .item .val{font-size:16px;color:#8fa3b0;text-align:right;
+  word-break:break-all;max-width:58%}
+#menu input{width:100%;font-size:19px;padding:14px;border-radius:10px;
+  border:2px solid #555;background:#141414;color:#fff;font-family:inherit}
+body.dia #menu input{background:#fff;color:#000;border-color:#999}
+#menu button{min-height:60px;font-size:18px}
+.grade{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;
+  padding:14px;background:#141414;border-radius:10px;font-size:17px}
+body.dia .grade{background:#eee}
+.grade .r{color:#7a8a99}
+.grade .v{text-align:right;font-weight:bold;word-break:break-all}
+#mnResultado{margin-top:10px;font-size:17px;min-height:1.4em}
+.chave{padding:0 18px;border-radius:10px;font-size:18px;font-weight:bold;
+  border:2px solid #555;background:#222;color:#fff;min-height:52px;min-width:88px}
+.chave.on{background:#0a7d55;border-color:#0f9}
+/* --- painel do desmonte: o que precisa sair e onde esta' --- */
+#painelFogo{position:absolute;top:0;left:0;right:0;bottom:0;z-index:16;
+  background:rgba(0,0,0,.96);display:none;overflow:auto;padding:14px}
+body.dia #painelFogo{background:rgba(245,245,245,.98)}
+#painelFogo h2{margin:4px 0 4px;font-size:26px;color:#ff6b6b}
+#painelFogo .sub{color:#9ab;font-size:16px;margin-bottom:14px}
+.grupoFogo{border:2px solid #8c2323;border-radius:10px;margin-bottom:14px}
+.grupoFogo .tit{padding:12px 14px;background:#2a1414;font-size:19px;font-weight:bold}
+body.dia .grupoFogo .tit{background:#f3dede;color:#000}
+.grupoFogo .lista{padding:6px 0}
+.itemFogo{display:flex;align-items:center;gap:12px;padding:12px 14px;
+  border-top:1px solid #3a2020;font-size:19px}
+.itemFogo .nm{flex:1;font-weight:bold}
+.itemFogo .erm{color:#c2aaff}
+.itemFogo .dist{font-size:22px;font-weight:bold;min-width:5.5em;text-align:right}
+.cabSecao{padding:10px 14px;font-size:16px;font-weight:bold;color:#c2aaff;
+  letter-spacing:.04em;border-top:1px solid #3a2020}
+.cabSecao.secundaria{color:#9ab;font-weight:normal}
+.itemFogo.secundaria{opacity:.72;font-size:17px}
+.itemFogo .dir{min-width:3em;text-align:center;color:#9ab;font-size:17px}
+.selo{padding:3px 10px;border-radius:99px;font-size:14px;font-weight:bold}
+.selo.erm{background:#6b3fbf;color:#fff}
+.selo.eq{background:#8a6a12;color:#fff}
+#fecharFogo{width:100%;margin-top:10px;min-height:60px;font-size:20px;background:#333}
+#fogoVazio{padding:16px;font-size:19px;color:#9ab}
+#desmonte{position:relative}
+#badgeFogo{position:absolute;top:-6px;right:-6px;background:#ff3b30;color:#fff;
+  border-radius:99px;min-width:24px;height:24px;font-size:14px;font-weight:bold;
+  line-height:24px;display:none}
+
+
+</style>
+</head>
+<body>
+
+<canvas id="tela"></canvas>
+
+<div id="abertura">
+  <div id="abTitulo">Navegacao da Mina</div>
+  <div id="abSub">BEM-VINDO</div>
+  <div id="abEquip">&nbsp;</div>
+  <div id="abChecagem">
+    <div><span class="marca espera" id="mkMapa">...</span><span id="txMapa">Mapa</span></div>
+    <div><span class="marca espera" id="mkGps">...</span><span id="txGps">GPS</span></div>
+    <div><span class="marca espera" id="mkSrv">...</span><span id="txSrv">Servidor</span></div>
+    <div><span class="marca espera" id="mkFrota">...</span><span id="txFrota">Frota</span></div>
+  </div>
+  <button id="abEntrar">COMECAR</button>
+  <div id="abNota"></div>
+</div>
+
+<div id="painelFogo">
+  <h2>Area de desmonte</h2>
+  <div class="sub" id="fogoSub"></div>
+  <div id="fogoLista"></div>
+  <button id="fecharFogo">Fechar</button>
+</div>
+
+<div id="menu">
+  <div id="mnTopo">
+    <span class="quem" id="mnCall">-</span>
+    <button class="fechar" id="fecharMenu">&times;</button>
+  </div>
+
+  <section>
+    <h3>Mapa</h3>
+    <div class="item"><span class="rot">Area de desmonte</span>
+      <button class="chave" id="chDesmonte">SIM</button></div>
+    <div class="item" id="linhaFoto" style="display:none">
+      <span class="rot">Foto aerea</span>
+      <button class="chave" id="chFoto">SIM</button></div>
+    <div class="item"><span class="rot">Pontos da mina</span>
+      <button class="chave" id="chPontos">NAO</button></div>
+    <div class="item"><span class="rot">Tema</span>
+      <button class="chave" id="chTema">NOITE</button></div>
+
+    <h3>Servidor</h3>
+    <div class="item"><span class="rot">Atual</span>
+      <span class="val" id="mnServidorVal">-</span></div>
+    <input id="mnServidor" placeholder="http://10.188.111.249:5000">
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button id="mnSalvar" style="flex:1">Salvar</button>
+      <button id="mnTestar" class="chave" style="flex:1">Testar</button>
+    </div>
+    <div id="mnResultado"></div>
+
+    <h3>Estado</h3>
+    <div class="grade">
+      <span class="r">GPS</span><span class="v" id="mnGps">-</span>
+      <span class="r">Fonte</span><span class="v" id="mnFonte">-</span>
+      <span class="r">Sentencas</span><span class="v" id="mnLinhas">-</span>
+      <span class="r">Mapa</span><span class="v" id="mnMapa">-</span>
+      <span class="r">Frota</span><span class="v" id="mnFrota">-</span>
+      <span class="r">Sincronizado</span><span class="v" id="mnSinc">-</span>
+      <span class="r" id="rVersao" style="display:none">Versao</span>
+      <span class="v" id="mnVersao" style="display:none"></span>
+      <span class="r" id="rFalha" style="display:none">Ultima falha</span>
+      <span class="v" id="mnFalha" style="display:none;color:#f88"></span>
+    </div>
+  </section>
+</div>
+
+<div id="topo">
+  <select id="destino"><option value="">Carregando destinos...</option></select>
+  <button id="ir">IR</button>
+  <button id="limpar" style="display:none">X</button>
+</div>
+
+<div id="avisos"></div>
+
+<div id="lateral">
+  <button id="mais" aria-label="aproximar">+</button>
+  <button id="menos" aria-label="afastar">&minus;</button>
+  <button id="eu" style="font-size:17px">EU</button>
+  <button id="tema" style="font-size:17px">DIA</button>
+  <button id="desmonte" style="font-size:14px">FOGO<span id="badgeFogo"></span></button>
+  <button id="btMenu">&#9776;</button>
+</div>
+
+<div id="rodape">
+  <div id="dist">--</div>
+  <div id="sub"></div>
+</div>
+
+<div id="movimento">
+  <canvas id="mvSeta" width="96" height="96"></canvas>
+  <div id="mvTexto">
+    <div><span id="mvDist">--</span><span id="mvUnid">metros</span></div>
+    <div id="mvDestino"></div>
+    <div id="mvNota">Em movimento — pare para mudar o destino</div>
+  </div>
+</div>
+
+<script>
+/* === INICIO NUCLEO ROTA ============================================== */
+/* Roteamento local sobre a malha em cache. E' o degrade quando o servidor
+   nao responde: a interface nunca pode ficar sem resposta por causa da rede.
+   O servidor continua sendo a fonte autoritativa quando esta' no ar.
+   Este bloco nao toca no DOM — o teste em node executa ele isolado.        */
+
+function NucleoRota() {
+  this.nos = {};        /* nome -> {lat, lon} */
+  this.adj = {};        /* nome -> [{para, peso, wgs}] */
+  this.trechos = [];    /* todos, para ancoragem */
+  this.lat0 = 0;
+  this.escalas(0);
+}
+
+/* Metrica local: nesta escala (2,7 x 6,2 km) equiretangular basta, desde que
+   os metros por grau sejam os do elipsoide NA LATITUDE DA MINA. Com as
+   constantes redondas de sempre a rota sai 0,1% curta; com estas, bate com o
+   servidor em centimetros. */
+NucleoRota.prototype.escalas = function (lat) {
+  var f = lat * Math.PI / 180;
+  this.mLat = 111132.92 - 559.82 * Math.cos(2*f) + 1.175 * Math.cos(4*f)
+              - 0.0023 * Math.cos(6*f);
+  this.mLon = 111412.84 * Math.cos(f) - 93.5 * Math.cos(3*f) + 0.118 * Math.cos(5*f);
+};
+NucleoRota.prototype.mx = function (lon) { return lon * this.mLon; };
+NucleoRota.prototype.my = function (lat) { return lat * this.mLat; };
+
+NucleoRota.prototype.dist = function (a, b) {
+  var dx = this.mx(a[0]) - this.mx(b[0]);
+  var dy = this.my(a[1]) - this.my(b[1]);
+  return Math.sqrt(dx * dx + dy * dy);
+};
+
+NucleoRota.prototype.comprimento = function (co) {
+  var s = 0;
+  for (var i = 0; i < co.length - 1; i++) s += this.dist(co[i], co[i + 1]);
+  return s;
+};
+
+/* Monta o grafo a partir do GeoJSON da malha. A topologia esta' no NOME
+   do trecho: "NO_A - NO_B". Trecho sem o separador entra so' no desenho. */
+NucleoRota.prototype.carregar = function (malha) {
+  this.nos = {}; this.adj = {}; this.trechos = [];
+  var somaLat = 0, n = 0, i, f;
+  for (i = 0; i < malha.features.length; i++) {
+    f = malha.features[i];
+    var co = f.geometry.coordinates;
+    if (!co || co.length < 2) continue;
+    somaLat += co[0][1]; n++;
+  }
+  this.lat0 = n ? somaLat / n : 0;
+  this.escalas(this.lat0);
+
+  for (i = 0; i < malha.features.length; i++) {
+    f = malha.features[i];
+    var c = f.geometry.coordinates, p = f.properties || {};
+    if (!c || c.length < 2) continue;
+    var nome = p.nome || '';
+    var corte = nome.indexOf(' - ');
+    if (corte < 0) continue;
+    var a = nome.substring(0, corte), b = nome.substring(corte + 3);
+    var comp = this.comprimento(c);
+    var t = { de: a, para: b, id: p.id, nome: nome, fechada: !!p.fechada,
+              wgs: c, comp: comp };
+    this.trechos.push(t);
+    if (!this.nos[a]) this.nos[a] = { lon: c[0][0], lat: c[0][1] };
+    if (!this.nos[b]) this.nos[b] = { lon: c[c.length-1][0], lat: c[c.length-1][1] };
+    if (t.fechada) continue;                    /* fechado nao roteia */
+    if (!this.adj[a]) this.adj[a] = [];
+    if (!this.adj[b]) this.adj[b] = [];
+    this.adj[a].push({ para: b, peso: comp, wgs: c, inverte: false });
+    this.adj[b].push({ para: a, peso: comp, wgs: c, inverte: true });
+  }
+  return this;
+};
+
+/* Pe da perpendicular preso ao segmento. */
+NucleoRota.prototype.projeta = function (px, py, ax, ay, bx, by) {
+  var vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+  if (l2 <= 0) return { x: ax, y: ay, t: 0 };
+  var t = ((px - ax) * vx + (py - ay) * vy) / l2;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  return { x: ax + t * vx, y: ay + t * vy, t: t };
+};
+
+/* Ancora no TRECHO mais proximo, nao no no' mais proximo: com o veiculo no
+   meio de um trecho longo, ancorar no no' faria a rota mandar voltar. */
+NucleoRota.prototype.ancorar = function (lat, lon, incluirFechados) {
+  var px = this.mx(lon), py = this.my(lat);
+  var melhor = null, md = Infinity;
+  for (var k = 0; k < this.trechos.length; k++) {
+    var t = this.trechos[k];
+    if (t.fechada && !incluirFechados) continue;
+    var c = t.wgs;
+    for (var i = 0; i < c.length - 1; i++) {
+      var r = this.projeta(px, py, this.mx(c[i][0]), this.my(c[i][1]),
+                                   this.mx(c[i+1][0]), this.my(c[i+1][1]));
+      var d = (r.x - px) * (r.x - px) + (r.y - py) * (r.y - py);
+      if (d < md) { md = d; melhor = { trecho: t, i: i, t: r.t }; }
+    }
+  }
+  if (!melhor) return null;
+  var c2 = melhor.trecho.wgs, i2 = melhor.i, tt = melhor.t;
+  melhor.lon = c2[i2][0] + tt * (c2[i2+1][0] - c2[i2][0]);
+  melhor.lat = c2[i2][1] + tt * (c2[i2+1][1] - c2[i2][1]);
+  melhor.dist_m = Math.sqrt(md);
+  return melhor;
+};
+
+/* Distancia, andando pelo trecho, do ponto ancorado ate cada extremo, e a
+   geometria parcial correspondente (sempre no sentido ponto -> extremo). */
+NucleoRota.prototype.pernas = function (anc) {
+  var c = anc.trecho.wgs, i = anc.i, p = [anc.lon, anc.lat], k;
+  var ateDe = [p], atePara = [p];
+  var dDe = this.dist(p, c[i]), dPara = this.dist(p, c[i + 1]);
+  for (k = i; k >= 0; k--) ateDe.push(c[k]);
+  for (k = i - 1; k >= 0; k--) dDe += this.dist(c[k], c[k + 1]);
+  for (k = i + 1; k < c.length; k++) atePara.push(c[k]);
+  for (k = i + 1; k < c.length - 1; k++) dPara += this.dist(c[k], c[k + 1]);
+  return { ateDe: ateDe, atePara: atePara, dDe: dDe, dPara: dPara };
+};
+
+NucleoRota.prototype.inverter = function (a) {
+  var r = [];
+  for (var i = a.length - 1; i >= 0; i--) r.push(a[i]);
+  return r;
+};
+
+/* Dijkstra com fila simples. 318 nos: nao precisa de heap. */
+NucleoRota.prototype.rota = function (lat, lon, destinoNome, destinoPonto) {
+  var ORIGEM = '@VEICULO', DESTINO = '@DESTINO';
+  var anc = this.ancorar(lat, lon, false);
+  if (!anc) return { ok: false, erro: 'sem malha viaria em cache' };
+
+  /* adjacencia extra desta consulta; a do mapa nunca e' alterada */
+  var extra = {};
+  function liga(de, para, peso, wgs) {
+    if (!extra[de]) extra[de] = [];
+    extra[de].push({ para: para, peso: peso, wgs: wgs, inverte: false });
+  }
+  var p = this.pernas(anc);
+  liga(ORIGEM, anc.trecho.de, p.dDe, p.ateDe);
+  liga(ORIGEM, anc.trecho.para, p.dPara, p.atePara);
+
+  var alvo = destinoNome, ancD = null;
+  if (destinoPonto) {
+    ancD = this.ancorar(destinoPonto.lat, destinoPonto.lon, false);
+    if (!ancD) return { ok: false, erro: 'destino fora da malha' };
+    var q = this.pernas(ancD);
+    alvo = DESTINO;
+    liga(ancD.trecho.de, DESTINO, q.dDe, this.inverter(q.ateDe));
+    liga(ancD.trecho.para, DESTINO, q.dPara, this.inverter(q.atePara));
+    if (ancD.trecho.id === anc.trecho.id) {
+      /* mesmo trecho: liga direto, senao a rota da' a volta pelo no' */
+      var so = this.sAoLongo(anc), sd = this.sAoLongo(ancD), meio = [], kk;
+      if (sd >= so) { for (kk = anc.i + 1; kk <= ancD.i; kk++) meio.push(anc.trecho.wgs[kk]); }
+      else { for (kk = anc.i; kk > ancD.i; kk--) meio.push(anc.trecho.wgs[kk]); }
+      var linha = [[anc.lon, anc.lat]].concat(meio, [[ancD.lon, ancD.lat]]);
+      liga(ORIGEM, DESTINO, Math.abs(sd - so), linha);
+    }
+  } else if (!this.nos[alvo]) {
+    return { ok: false, erro: 'destino desconhecido: ' + destinoNome };
+  }
+
+  var self = this;
+  function vizinhos(u) {
+    var a = self.adj[u] || [], b = extra[u] || [];
+    return a.concat(b);
+  }
+
+  var dist = {}, ant = {}, visto = {}, fila = [ORIGEM], i;
+  dist[ORIGEM] = 0;
+  while (fila.length) {
+    /* menor pendente */
+    var mi = 0;
+    for (i = 1; i < fila.length; i++) if (dist[fila[i]] < dist[fila[mi]]) mi = i;
+    var u = fila[mi]; fila.splice(mi, 1);
+    if (visto[u]) continue;
+    visto[u] = true;
+    if (u === alvo) break;
+    var vz = vizinhos(u);
+    for (i = 0; i < vz.length; i++) {
+      var v = vz[i], nd = dist[u] + v.peso;
+      if (visto[v.para]) continue;
+      if (dist[v.para] === undefined || nd < dist[v.para]) {
+        dist[v.para] = nd;
+        ant[v.para] = { de: u, aresta: v };
+        fila.push(v.para);
+      }
+    }
+  }
+
+  if (dist[alvo] === undefined) {
+    return { ok: false, erro: 'sem caminho ate o destino',
+             detalhe: 'os dois pontos estao em partes desconexas da malha' };
+  }
+
+  /* reconstroi caminho e geometria */
+  var caminho = [], arestas = [], cur = alvo;
+  while (cur !== ORIGEM) {
+    var pa = ant[cur];
+    caminho.push(cur); arestas.push(pa.aresta); cur = pa.de;
+  }
+  caminho.push(ORIGEM);
+  caminho = this.inverter(caminho); arestas = this.inverter(arestas);
+
+  var linha2 = [];
+  for (i = 0; i < arestas.length; i++) {
+    var w = arestas[i].wgs;
+    if (arestas[i].inverte) w = this.inverter(w);
+    if (!linha2.length) linha2 = linha2.concat(w);
+    else linha2 = linha2.concat(w.slice(1));
+  }
+
+  var nos = [];
+  for (i = 0; i < caminho.length; i++)
+    if (caminho[i].charAt(0) !== '@') nos.push(caminho[i]);
+
+  return { ok: true, local: true, distancia_m: Math.round(dist[alvo] * 10) / 10,
+           n_nos: nos.length, nos: nos,
+           geometria: { type: 'LineString', coordinates: linha2 },
+           ancorou_em: anc.trecho.nome, dist_ate_malha_m: Math.round(anc.dist_m * 10) / 10,
+           ancorou_lat: anc.lat, ancorou_lon: anc.lon };
+};
+
+NucleoRota.prototype.sAoLongo = function (anc) {
+  var c = anc.trecho.wgs, s = 0;
+  for (var k = 0; k < anc.i; k++) s += this.dist(c[k], c[k + 1]);
+  return s + this.dist(c[anc.i], [anc.lon, anc.lat]);
+};
+
+if (typeof module !== 'undefined' && module.exports) module.exports = NucleoRota;
+/* === FIM NUCLEO ROTA ================================================= */
+</script>
+
+<script>
+/* Carimbo da tela. Aparece na abertura e no menu: ja' se perdeu tempo
+   discutindo se o aparelho estava com a versao nova ou a velha. */
+var VERSAO_INTERFACE = '2026-09-01 · foto aerea, desmonte, menu, frota';
+
+var malha = null, locais = [], areas = null, rota = null;
+var frota = [], frotaAssinatura = '', frotaIdade = null;
+var desmontes = [], mostrarDesmonte = true, desmonteDoCache = false;
+var dentroDoFogo = {};   /* nome do equipamento -> desmonte que o pega */
+/* Os 940 locais da mina poluem o mapa. Por padrao o mapa mostra so'
+   equipamento e ERM; os locais continuam na lista de destinos. */
+var mostrarLocais = false;
+var pos = null, estado = null, nucleo = null;
+var cx = -43.42, cy = -18.915, esc = 0, seguir = true;
+var arraste = null, pinca = null;
+var C = document.getElementById('tela'), g = C.getContext('2d');
+var mvC = document.getElementById('mvSeta'), mvG = mvC.getContext('2d');
+var emMovimento = false;
+
+var COR = {
+  noite: { fundo:'#000', via:'#7f93aa', fechada:'#ff4040', rota:'#ffb000',
+           local:'#39d353', rotulo:'#cfe', eu:'#33ccff', area:'rgba(255,60,60,.16)',
+           areaLinha:'#ff6060', destino:'#ffb000',
+           eqMovendo:'#ffd24d', eqParado:'#4fd8c8', eqFixo:'#9d8cff',
+           eqVelho:'#8a8a8a', eqBorda:'#000',
+           fogo:'#ff3b30', fogoArea:'rgba(255,59,48,.15)' },
+  dia:   { fundo:'#f2f2f2', via:'#33475c', fechada:'#c00000', rota:'#e06000',
+           local:'#0a7d25', rotulo:'#123', eu:'#0060c0', area:'rgba(200,0,0,.14)',
+           areaLinha:'#c00000', destino:'#e06000',
+           eqMovendo:'#b06a00', eqParado:'#00786c', eqFixo:'#4b32b8',
+           eqVelho:'#777', eqBorda:'#fff',
+           fogo:'#c00000', fogoArea:'rgba(200,0,0,.13)' }
+};
+function cores() { return document.body.className === 'dia' ? COR.dia : COR.noite; }
+
+function kx() { return Math.cos(cy * Math.PI / 180); }
+function px(lon) { return (lon - cx) * esc * kx() + C.clientWidth / 2; }
+function py(lat) { return -(lat - cy) * esc + C.clientHeight / 2; }
+
+function dimensiona() {
+  var r = window.devicePixelRatio || 1;
+  C.width = Math.round(C.clientWidth * r);
+  C.height = Math.round(C.clientHeight * r);
+  g.setTransform(r, 0, 0, r, 0, 0);
+  posicionaLateral();
+  desenha();
+}
+
+function posicionaLateral() {
+  /* mantem os botoes longe do rodape quando ele aparece */
+  var alto = document.getElementById('rodape').style.display === 'block' ? 130 : 24;
+  document.getElementById('lateral').style.bottom = alto + 'px';
+}
+
+function enquadra() {
+  if (!malha || !malha.features.length) return;
+  var a = 1e9, b = -1e9, c = 1e9, d = -1e9;
+  for (var i = 0; i < malha.features.length; i++) {
+    var co = malha.features[i].geometry.coordinates;
+    for (var j = 0; j < co.length; j++) {
+      if (co[j][0] < a) a = co[j][0];
+      if (co[j][0] > b) b = co[j][0];
+      if (co[j][1] < c) c = co[j][1];
+      if (co[j][1] > d) d = co[j][1];
+    }
+  }
+  cx = (a + b) / 2; cy = (c + d) / 2;
+  var ex = C.clientWidth / ((b - a) * kx()), ey = C.clientHeight / (d - c);
+  esc = Math.min(ex, ey) * 0.85;
+}
+
+function linha(co, cor, largura) {
+  g.beginPath();
+  for (var i = 0; i < co.length; i++) {
+    var x = px(co[i][0]), y = py(co[i][1]);
+    if (i) g.lineTo(x, y); else g.moveTo(x, y);
+  }
+  g.strokeStyle = cor; g.lineWidth = largura;
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  g.stroke();
+}
+
+/* --- foto aerea ------------------------------------------------------
+   O servidor entrega a foto ja' cortada em ladrilhos e ja' na posicao certa;
+   aqui so' se escolhe o nivel de detalhe e se desenha. Quem nao tem foto
+   servida (o PTX, por enquanto) recebe 404 no manifesto e segue sem ela. */
+var foto = null, fotoPng = {}, mostrarFoto = true, fotoImgs = {};
+var fotoBaixando = 0, fotoUso = 0;
+var FOTO_SIMULTANEAS = 6, FOTO_GUARDADAS = 600;
+
+function carregaFoto() {
+  pega('/foto/manifesto.json', function (m) {
+    if (!m || !m.niveis || !m.niveis.length || !m.cantos) return;
+    foto = m;
+    /* os ladrilhos da borda do voo tem alfa e vem em PNG; o resto e' JPEG */
+    fotoPng = {};
+    var lista = m.png || [];
+    for (var i = 0; i < lista.length; i++) fotoPng[lista[i]] = 1;
+    document.getElementById('linhaFoto').style.display = '';
+    chave('chFoto', mostrarFoto);
+    desenha();
+  }, function () { /* ainda nao; tentaFoto insiste */ });
+}
+
+/* Uma tentativa so' nao basta: no arranque o Wi-Fi do tablet as vezes ainda
+   nao subiu, e a foto ficava fora pelo resto da sessao inteira. Onde nao ha
+   foto servida, isto e' um 404 de trinta bytes de vez em quando. */
+function tentaFoto() {
+  if (!foto) carregaFoto();
+}
+
+function nivelFoto() {
+  /* metros por pixel de tela: a escala e' em pixels por grau de latitude */
+  var m = 111320 / esc, n = foto.niveis, escolhido = n[0];
+  for (var i = 0; i < n.length; i++) {
+    if (n[i].m_por_px < m * 0.5) break;   /* mais detalhe do que a tela mostra */
+    escolhido = n[i];
+  }
+  return escolhido;
+}
+
+function ladrilhoFoto(z, tx, ty, pedir) {
+  var k = z + '/' + tx + '/' + ty, im = fotoImgs[k];
+  if (im) { im.uso = ++fotoUso; return im.pronto ? im : null; }
+  if (!pedir) return null;             /* nivel de fundo: so' o que ja' veio */
+  if (fotoBaixando >= FOTO_SIMULTANEAS) return null;
+  im = new Image();
+  im.pronto = false; im.uso = ++fotoUso;
+  fotoImgs[k] = im;
+  fotoBaixando++;
+  im.onload = function () { im.pronto = true; fotoBaixando--; pedeDesenho(); };
+  im.onerror = function () { fotoBaixando--; };
+  im.src = '/foto/' + k + '.' + (fotoPng[k] ? 'png' : (foto.formato || 'jpg'));
+  return null;
+}
+
+function limpaLadrilhos() {
+  var chaves = [], k;
+  for (k in fotoImgs) if (fotoImgs.hasOwnProperty(k)) chaves.push(k);
+  if (chaves.length <= FOTO_GUARDADAS) return;
+  chaves.sort(function (a, b) { return fotoImgs[a].uso - fotoImgs[b].uso; });
+  for (var i = 0; i < chaves.length - FOTO_GUARDADAS; i++) {
+    if (fotoImgs[chaves[i]].pronto) delete fotoImgs[chaves[i]];
+  }
+}
+
+var desenhoPedido = false;
+function pedeDesenho() {
+  /* varios ladrilhos chegam juntos; redesenhar a cada um seria desperdicio */
+  if (desenhoPedido) return;
+  desenhoPedido = true;
+  setTimeout(function () { desenhoPedido = false; desenha(); }, 60);
+}
+
+function desenhaNivelFoto(nv, pedir, x0, y0, ax, ay, bx, by, W, H,
+                          larguraM, alturaM) {
+  var L = foto.ladrilho;
+  var pu = L * nv.m_por_px / larguraM, pv = L * nv.m_por_px / alturaM;
+  for (var ty = 0; ty < nv.linhas; ty++) {
+    for (var tx = 0; tx < nv.cols; tx++) {
+      var u = tx * pu, v = ty * pv;
+      /* fora da tela nao se baixa: numa rede de mina isso custa caro */
+      var sx1 = x0 + ax * u + bx * v, sy1 = y0 + ay * u + by * v;
+      var sx2 = x0 + ax * (u + pu) + bx * (v + pv);
+      var sy2 = y0 + ay * (u + pu) + by * (v + pv);
+      if (Math.max(sx1, sx2) < 0 || Math.min(sx1, sx2) > W ||
+          Math.max(sy1, sy2) < 0 || Math.min(sy1, sy2) > H) continue;
+      var im = ladrilhoFoto(nv.z, tx, ty, pedir);
+      /* meio pixel a mais de cada lado: sem isso a interpolacao do canvas
+         deixa uma linha fina entre ladrilhos vizinhos */
+      if (im) g.drawImage(im, u, v, pu * (L + 1) / L, pv * (L + 1) / L);
+    }
+  }
+}
+
+function desenhaFoto(W, H) {
+  if (!foto || !mostrarFoto || !esc) return;
+  var c = foto.cantos;
+  var x0 = px(c.no[0]), y0 = py(c.no[1]);
+  var ax = px(c.ne[0]) - x0, ay = py(c.ne[1]) - y0;
+  var bx = px(c.so[0]) - x0, by = py(c.so[1]) - y0;
+  if (!isFinite(ax) || !isFinite(by)) return;
+
+  var alvo = nivelFoto();
+  var larguraM = foto.grid.E1 - foto.grid.E0;
+  var alturaM = foto.grid.N1 - foto.grid.N0;
+
+  g.save();
+  /* passa a desenhar em coordenada do mosaico: 0 a 1 em cada lado */
+  g.transform(ax, ay, bx, by, x0, y0);
+
+  /* Do grosso para o fino, um por cima do outro. Enquanto os ladrilhos do
+     nivel de detalhe nao chegam, o que aparece e' a mesma area em resolucao
+     menor — borrada, mas no lugar certo. Antes ficava preto ate' o download
+     terminar, e no meio de uma manobra isso e' o pior momento possivel.
+     Dos niveis de fundo so' se desenha o que ja' esta' na memoria; o mais
+     grosso de todos e' um ladrilho so', entao esse vale pedir sempre. */
+  for (var k = 0; k <= alvo.z && k < foto.niveis.length; k++) {
+    desenhaNivelFoto(foto.niveis[k], k === alvo.z || k === 0,
+                     x0, y0, ax, ay, bx, by, W, H, larguraM, alturaM);
+  }
+
+  /* Um veu do fundo por cima da foto inteira, e nao transparencia ladrilho a
+     ladrilho: os ladrilhos se sobrepoem meio pixel, e com alfa menor que 1 a
+     sobreposicao compoe duas vezes e desenha uma grade de emendas na tela. */
+  g.globalAlpha = 0.12;
+  g.fillStyle = cores().fundo;
+  g.fillRect(0, 0, 1, 1);
+  g.restore();
+  limpaLadrilhos();
+}
+
+function desenha() {
+  var c = cores(), W = C.clientWidth, H = C.clientHeight, i;
+  g.fillStyle = c.fundo; g.fillRect(0, 0, W, H);
+  if (!esc) return;
+
+  /* a foto aerea e' o fundo: tudo o mais e' desenhado por cima dela */
+  desenhaFoto(W, H);
+
+  /* areas de risco por baixo de tudo */
+  if (areas && areas.features) {
+    for (i = 0; i < areas.features.length; i++) {
+      var an = areas.features[i].geometry.coordinates[0];
+      g.beginPath();
+      for (var j = 0; j < an.length; j++) {
+        var x = px(an[j][0]), y = py(an[j][1]);
+        if (j) g.lineTo(x, y); else g.moveTo(x, y);
+      }
+      g.closePath();
+      g.fillStyle = c.area; g.fill();
+      g.strokeStyle = c.areaLinha; g.lineWidth = 2; g.stroke();
+    }
+  }
+
+  /* area de desmonte: por baixo das vias, para nao esconder a estrada */
+  desenhaDesmontes(c, W, H);
+
+  /* malha viaria: fechados em vermelho e tracejado */
+  if (malha) {
+    for (i = 0; i < malha.features.length; i++) {
+      var f = malha.features[i];
+      if (f.properties.fechada) {
+        if (g.setLineDash) g.setLineDash([10, 8]);
+        linha(f.geometry.coordinates, c.fechada, 5);
+        if (g.setLineDash) g.setLineDash([]);
+      } else {
+        linha(f.geometry.coordinates, c.via, 4);
+      }
+    }
+  }
+
+  /* rota tracada */
+  if (rota && rota.geometria && rota.geometria.coordinates.length) {
+    var co = rota.geometria.coordinates;
+    linha(co, c.rota, 9);
+    var u = co[co.length - 1];
+
+    /* A rota termina onde a via chega mais perto do destino. Se o destino
+       estiver fora da via — quase sempre o caso de um equipamento em campo —
+       o ultimo trecho vai tracejado, para o operador ver que aquele pedaco
+       nao e' estrada. */
+    if (rota.destino_lat !== undefined && rota.destino_lat !== null) {
+      var d = metros({ lat: u[1], lon: u[0] },
+                     { lat: rota.destino_lat, lon: rota.destino_lon });
+      if (d > 5) {
+        if (g.setLineDash) g.setLineDash([12, 9]);
+        linha([u, [rota.destino_lon, rota.destino_lat]], c.destino, 5);
+        if (g.setLineDash) g.setLineDash([]);
+      }
+      u = [rota.destino_lon, rota.destino_lat];
+    }
+
+    g.beginPath(); g.arc(px(u[0]), py(u[1]), 13, 0, 6.2832);
+    g.fillStyle = c.destino; g.fill();
+    g.strokeStyle = c.fundo; g.lineWidth = 3; g.stroke();
+  }
+
+  /* locais: escondidos por padrao (sao 940). O botao PTS liga. */
+  if (mostrarLocais && esc > 9000) {
+    var W2 = W + 40, H2 = H + 40;
+    for (i = 0; i < locais.length; i++) {
+      var o = locais[i], ox = px(o.lon), oy = py(o.lat);
+      if (ox < -40 || oy < -40 || ox > W2 || oy > H2) continue;
+      g.beginPath(); g.arc(ox, oy, 5, 0, 6.2832);
+      g.fillStyle = c.local; g.fill();
+      if (esc > 26000) {
+        g.fillStyle = c.rotulo;
+        g.font = 'bold 13px "DejaVu Sans",sans-serif';
+        g.fillText(o.nome, ox + 8, oy - 8);
+      }
+    }
+  }
+
+  /* frota: onde estao os equipamentos, pelo GPS dos radios Rajant */
+  desenhaFrota(c, W, H);
+
+  /* posicao propria: seta orientada pelo rumo */
+  if (pos && pos.tem_fix) {
+    var ex = px(pos.lon), ey = py(pos.lat);
+    g.save(); g.translate(ex, ey); g.rotate((pos.cog || 0) * Math.PI / 180);
+    g.beginPath();
+    g.moveTo(0, -22); g.lineTo(15, 18); g.lineTo(0, 9); g.lineTo(-15, 18);
+    g.closePath();
+    g.fillStyle = c.eu; g.fill();
+    g.strokeStyle = document.body.className === 'dia' ? '#fff' : '#000';
+    g.lineWidth = 3; g.stroke();
+    g.restore();
+  }
+}
+
+/* Metros -> pixels, pela latitude do centro da tela. */
+function metrosEmPx(m) { return m / 110540.0 * esc; }
+
+/* O circulo do desmonte e' informacao de seguranca: fica visivel em
+   qualquer zoom, com o nome e o raio escritos. */
+function desenhaDesmontes(c, W, H) {
+  if (!mostrarDesmonte || !desmontes.length) return;
+  for (var i = 0; i < desmontes.length; i++) {
+    var d = desmontes[i];
+    /* um circulo por furo: o raio vale de cada ponto, nao do centro do
+       conjunto — desmonte espalhado tem area maior que um circulo so' */
+    var pts = d.pontos && d.pontos.length ? d.pontos : [d];
+    var r = metrosEmPx(d.raio_m || 400), j2, x, y;
+    for (j2 = 0; j2 < pts.length; j2++) {
+      if (pts[j2].lat === undefined || pts[j2].lat === null) continue;
+      x = px(pts[j2].lon); y = py(pts[j2].lat);
+      if (x + r < -50 || y + r < -50 || x - r > W + 50 || y - r > H + 50) continue;
+      g.beginPath(); g.arc(x, y, r, 0, 6.2832);
+      g.fillStyle = c.fogoArea; g.fill();
+      if (g.setLineDash) g.setLineDash([14, 10]);
+      g.strokeStyle = c.fogo; g.lineWidth = 4; g.stroke();
+      if (g.setLineDash) g.setLineDash([]);
+      g.beginPath(); g.arc(x, y, 7, 0, 6.2832); g.fillStyle = c.fogo; g.fill();
+    }
+    if (d.lat === undefined || d.lat === null) continue;
+    /* o rotulo vai ACIMA do circulo: no centro ele briga com o nome das
+       ERMs, que e' a informacao que o operador foi ler */
+    x = px(d.lon); y = py(d.lat) - r - 14;
+    if (y < 78) y = py(d.lat) + r + 26;      /* nao esconde atras da barra */
+    g.font = 'bold 16px "DejaVu Sans",sans-serif';
+    var t = 'DESMONTE ' + (d.nome || '') + '  ·  ' + Math.round(d.raio_m || 400) + ' m';
+    g.textAlign = 'center';
+    g.lineWidth = 5; g.strokeStyle = c.fundo;
+    g.strokeText(t, x, y);
+    g.fillStyle = c.fogo; g.fillText(t, x, y);
+    g.textAlign = 'left';
+  }
+}
+
+/* Um equipamento e' um circulo cheio com contorno grosso; quem esta' andando
+   ganha a ponta virada para o rumo. Cinza = posicao velha ou radio offline:
+   maquina que anda com posicao velha nao pode parecer atual. */
+function corEquip(c, e) {
+  if (!e.online || (e.idade_s !== null && e.idade_s > 60)) return c.eqVelho;
+  if (!e.movel) return c.eqFixo;
+  return e.parado ? c.eqParado : c.eqMovendo;
+}
+
+function desenhaFrota(c, W, H) {
+  if (!frota.length || esc < 800) return;
+  var alvo = (rota && rota.destino_equip) ? rota.destino_equip : null;
+  for (var i = 0; i < frota.length; i++) {
+    var e = frota[i];
+    if (!e.tem_fix) continue;
+    var x = px(e.lon), y = py(e.lat);
+    if (x < -60 || y < -60 || x > W + 60 || y > H + 60) continue;
+    var cor = corEquip(c, e), raio = e.movel ? 9 : 7;
+
+    if (e.movel && !e.parado && e.rumo !== null && e.rumo !== undefined) {
+      g.save(); g.translate(x, y); g.rotate(e.rumo * Math.PI / 180);
+      g.beginPath();
+      g.moveTo(0, -(raio + 9)); g.lineTo(raio, raio); g.lineTo(-raio, raio);
+      g.closePath();
+      g.fillStyle = cor; g.fill();
+      g.strokeStyle = c.eqBorda; g.lineWidth = 2.5; g.stroke();
+      g.restore();
+    } else {
+      g.beginPath(); g.arc(x, y, raio, 0, 6.2832);
+      g.fillStyle = cor; g.fill();
+      g.strokeStyle = c.eqBorda; g.lineWidth = 2.5; g.stroke();
+    }
+
+    /* quem esta' na area de desmonte fica marcado, com o nome sempre visivel:
+       e' a resposta de "onde ela esta'" */
+    if (mostrarDesmonte && dentroDoFogo[e.nome] && !e.movel) {
+      g.beginPath(); g.arc(x, y, raio + 11, 0, 6.2832);
+      g.strokeStyle = c.fogo; g.lineWidth = 4; g.stroke();
+      g.font = 'bold 15px "DejaVu Sans",sans-serif';
+      g.lineWidth = 5; g.strokeStyle = c.fundo;
+      g.strokeText(e.nome, x + raio + 14, y + 5);
+      g.fillStyle = c.fogo; g.fillText(e.nome, x + raio + 14, y + 5);
+    }
+
+    /* o equipamento escolhido ganha um anel, para nao se perder no meio */
+    if (alvo && e.nome === alvo) {
+      g.beginPath(); g.arc(x, y, raio + 8, 0, 6.2832);
+      g.strokeStyle = c.destino; g.lineWidth = 4; g.stroke();
+    }
+
+    /* movel ganha rotulo antes: e' o que o operador procura.
+       ERM e torre so' com mais zoom, senao viram poluicao. */
+    var limiarRotulo = e.movel ? 5000 : 14000;
+    if (mostrarDesmonte && dentroDoFogo[e.nome] && !e.movel) continue;
+    if (esc > limiarRotulo || (alvo && e.nome === alvo)) {
+      g.font = 'bold 14px "DejaVu Sans",sans-serif';
+      var t = e.nome;
+      if (e.movel && !e.parado && e.vel_kmh !== null && e.vel_kmh !== undefined)
+        t += '  ' + Math.round(e.vel_kmh) + ' km/h';
+      g.lineWidth = 4; g.strokeStyle = c.fundo;
+      g.strokeText(t, x + raio + 5, y - raio - 3);
+      g.fillStyle = cor;
+      g.fillText(t, x + raio + 5, y - raio - 3);
+    }
+  }
+}
+
+function desenhaSeta(anguloRelativo) {
+  var c = cores(), w = mvC.width, h = mvC.height;
+  mvG.clearRect(0, 0, w, h);
+  mvG.save(); mvG.translate(w / 2, h / 2);
+  mvG.rotate(anguloRelativo * Math.PI / 180);
+  var k = Math.min(w, h) / 240;      /* a seta acompanha o tamanho do canvas */
+  mvG.beginPath();
+  mvG.moveTo(0, -95 * k); mvG.lineTo(62 * k, 75 * k);
+  mvG.lineTo(0, 40 * k); mvG.lineTo(-62 * k, 75 * k);
+  mvG.closePath();
+  mvG.fillStyle = c.rota; mvG.fill();
+  mvG.lineWidth = Math.max(2, 5 * k); mvG.strokeStyle = c.fundo; mvG.stroke();
+  mvG.restore();
+}
+
+/* Rumo do ponto a ate b, em graus. */
+function rumo(a, b) {
+  var la1 = a.lat * Math.PI / 180, la2 = b.lat * Math.PI / 180;
+  var dlo = (b.lon - a.lon) * Math.PI / 180;
+  var y = Math.sin(dlo) * Math.cos(la2);
+  var x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dlo);
+  var d = Math.atan2(y, x) * 180 / Math.PI;
+  return (d + 360) % 360;
+}
+
+function metros(a, b) {
+  var k = Math.cos(a.lat * Math.PI / 180);
+  var dx = (b.lon - a.lon) * 111320 * k, dy = (b.lat - a.lat) * 110540;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/* Distancia que falta: do ponto mais proximo da rota ate o fim dela. */
+function restante() {
+  if (!rota || !rota.geometria || !pos) return null;
+  var co = rota.geometria.coordinates;
+  if (co.length < 2) return null;
+  var eu = { lat: pos.lat, lon: pos.lon };
+  var melhor = 0, md = Infinity, i;
+  for (i = 0; i < co.length; i++) {
+    var d = metros(eu, { lon: co[i][0], lat: co[i][1] });
+    if (d < md) { md = d; melhor = i; }
+  }
+  var falta = 0;
+  for (i = melhor; i < co.length - 1; i++)
+    falta += metros({ lon: co[i][0], lat: co[i][1] },
+                    { lon: co[i+1][0], lat: co[i+1][1] });
+  /* ponto ~60 m a frente, para orientar a seta */
+  var acum = 0, alvo = co[co.length - 1];
+  for (i = melhor; i < co.length - 1; i++) {
+    acum += metros({ lon: co[i][0], lat: co[i][1] },
+                   { lon: co[i+1][0], lat: co[i+1][1] });
+    if (acum >= 60) { alvo = co[i + 1]; break; }
+  }
+  return { falta: falta, alvo: { lon: alvo[0], lat: alvo[1] }, desvio: md };
+}
+
+function formataDist(m) {
+  if (m < 1000) return { v: String(Math.round(m)), u: 'metros' };
+  return { v: (m / 1000).toFixed(2).replace('.', ','), u: 'quilometros' };
+}
+
+/* Escolher destino so' com o equipamento parado. Em movimento, o minimo:
+   direcao e distancia, fonte grande, sem interacao. Secao 6 da especificacao. */
+function aplicaModo() {
+  var mover = !!(pos && pos.tem_fix && !pos.parado);
+  var painel = document.getElementById('movimento');
+  if (mover && rota) {
+    if (!emMovimento) {
+      emMovimento = true;
+      painel.style.display = 'flex';
+      /* comecou a andar: o mapa passa a acompanhar o veiculo, na escala que o
+         operador escolheu. Arrastar o mapa desliga; o botao EU religa. */
+      seguir = true;
+      if (pos) { cx = pos.lon; cy = pos.lat; }
+      /* a barra de destino fica travada em movimento; escondida ela devolve
+         o espaco para a faixa de navegacao, sem sobrepor uma na outra */
+      document.getElementById('topo').style.display = 'none';
+      /* o rodape traz o total da rota; a faixa traz o que falta. Dois numeros
+         grandes com valores diferentes, lado a lado, so' confundem quem esta'
+         dirigindo — em movimento vale o que falta. */
+      document.getElementById('rodape').style.display = 'none';
+      posicionaLateral();
+    }
+    var r = restante();
+    if (r) {
+      var f = formataDist(r.falta);
+      document.getElementById('mvDist').textContent = f.v;
+      document.getElementById('mvUnid').textContent = f.u;
+      desenhaSeta(rumo({ lat: pos.lat, lon: pos.lon }, r.alvo) - (pos.cog || 0));
+    }
+    document.getElementById('mvDestino').textContent = rota.destino_pedido || '';
+  } else {
+    if (emMovimento) {
+      emMovimento = false;
+      painel.style.display = 'none';
+      document.getElementById('topo').style.display = '';
+      if (rota) document.getElementById('rodape').style.display = 'block';
+      posicionaLateral();
+    }
+  }
+  /* sem rota tracada, em movimento, a escolha fica travada mesmo assim */
+  var trava = mover;
+  document.getElementById('destino').disabled = trava;
+  document.getElementById('ir').disabled = trava || !document.getElementById('destino').value;
+}
+
+var avisos = {};
+function aviso(chave, texto, atencao) {
+  if (texto) avisos[chave] = { t: texto, a: !!atencao };
+  else delete avisos[chave];
+  var d = document.getElementById('avisos'), html = '';
+  for (var k in avisos) if (avisos.hasOwnProperty(k))
+    html += '<div class="aviso' + (avisos[k].a ? ' ok' : '') + '">' +
+            escapaHtml(avisos[k].t) + '</div>';
+  d.innerHTML = html;
+  d.style.top = (document.getElementById('topo').offsetHeight + 10) + 'px';
+}
+function escapaHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function pega(url, ok, falha) {
+  var x = new XMLHttpRequest();
+  x.open('GET', url, true);
+  x.timeout = 20000;
+  x.onreadystatechange = function () {
+    if (x.readyState !== 4) return;
+    if (x.status >= 200 && x.status < 300) {
+      var j = null;
+      try { j = JSON.parse(x.responseText); }
+      catch (e) { if (falha) falha('resposta invalida'); return; }
+      ok(j);
+    } else if (falha) falha('HTTP ' + x.status);
+  };
+  x.ontimeout = function () { if (falha) falha('sem resposta'); };
+  x.onerror = function () { if (falha) falha('falha de rede'); };
+  x.send();
+}
+
+function carregaMapa() {
+  pega('/malha', function (j) {
+    if (j.erro) { aviso('mapa', 'Sem mapa em cache: ' + j.erro); return; }
+    malha = j; aviso('mapa', '');
+    nucleo = new NucleoRota().carregar(malha);
+    if (!esc) enquadra();
+    desenha();
+  }, function (e) { aviso('mapa', 'Nao consegui ler o mapa local (' + e + ')'); });
+
+  pega('/areas', function (j) { if (j && j.features) { areas = j; desenha(); } },
+       function () { });
+
+  pega('/locais', function (j) {
+    if (!j.locais) return;
+    locais = [];
+    for (var i = 0; i < j.locais.length; i++)
+      if (j.locais[i].ativa) locais.push(j.locais[i]);
+    montaSeletor();
+    desenha();
+  }, function () { });
+}
+
+function montaSeletor() {
+  var s = document.getElementById('destino');
+  var i, t;
+
+  /* so' reconstroi quando a lista muda de verdade: refazer o seletor a cada
+     ciclo tiraria a escolha da mao do operador */
+  /* Destinos = frota: equipamento movel e ERM/torre. Os 940 locais da mina
+     nao entram na busca — o operador procura maquina e repetidora, e a lista
+     cheia de ponto topografico so' atrapalhava. */
+  var moveis = [];
+  for (i = 0; i < frota.length; i++)
+    if (frota[i].tem_fix) moveis.push(frota[i]);
+  moveis.sort(function (a, b) { return a.nome < b.nome ? -1 : (a.nome > b.nome ? 1 : 0); });
+  var nomes = [];
+  for (i = 0; i < moveis.length; i++) nomes.push(moveis[i].nome);
+  var assinatura = nomes.join('|');
+  if (assinatura === frotaAssinatura && s.options.length > 1) return;
+  frotaAssinatura = assinatura;
+
+  var escolhido = s.value;
+  s.innerHTML = '';
+  var vazio = document.createElement('option');
+  vazio.value = '';
+  vazio.textContent = moveis.length
+    ? 'Escolha o equipamento'
+    : 'Nenhum equipamento com posicao';
+  s.appendChild(vazio);
+
+  /* equipamentos primeiro: e' o que mais se procura no turno */
+  if (moveis.length) {
+    var porTipoEq = {};
+    for (i = 0; i < moveis.length; i++) {
+      t = moveis[i].tipo || 'generico';
+      if (!porTipoEq[t]) porTipoEq[t] = [];
+      porTipoEq[t].push(moveis[i]);
+    }
+    var tiposEq = [];
+    for (t in porTipoEq) if (porTipoEq.hasOwnProperty(t)) tiposEq.push(t);
+    tiposEq.sort();
+    for (i = 0; i < tiposEq.length; i++) {
+      var Le = porTipoEq[tiposEq[i]];
+      var gre = document.createElement('optgroup');
+      gre.label = rotuloTipo(tiposEq[i]) + ' (' + Le.length + ')';
+      for (var ke = 0; ke < Le.length; ke++) {
+        var ope = document.createElement('option');
+        ope.value = 'E:' + Le[ke].nome;
+        ope.textContent = Le[ke].nome + (!Le[ke].movel ? ''
+          : (Le[ke].parado ? '  (parado)'
+             : '  (' + Math.round(Le[ke].vel_kmh || 0) + ' km/h)'));
+        gre.appendChild(ope);
+      }
+      s.appendChild(gre);
+    }
+  }
+
+  if (escolhido) s.value = escolhido;   /* mantem o que o operador escolheu */
+}
+
+function rotuloTipo(t) {
+  var m = { caminhao: 'Caminhao', pa: 'Pa', perfuratriz: 'Perfuratriz',
+            trator: 'Trator', escavadeira: 'Escavadeira',
+            repetidora: 'Repetidora', torre: 'Torre', generico: 'Outros' };
+  return m[t] || t;
+}
+
+/* A frota vem do servidor, que le' o GPS dos radios Rajant. E' dado vivo:
+   nao entra no cache por ETag e e' relido de tempos em tempos. */
+function leFrota() {
+  pega('/frota', function (j) {
+    if (!j || !j.equipamentos) return;
+    frota = j.equipamentos;
+    frotaIdade = j.do_cache ? (j.idade_cache_s || 0) : null;
+    if (j.do_cache)
+      aviso('frota', 'Frota do cache: posicoes de ' + Math.round(frotaIdade) +
+                     ' s atras', true);
+    else aviso('frota', '');
+    montaSeletor();
+    desenha();
+  }, function () { });
+}
+
+/* As areas de desmonte vem do servidor, cadastradas na pagina /desmonte.
+   Mudam uma vez por semana; o cliente guarda em disco, entao continuam na
+   tela mesmo com o servidor fora do ar. */
+function leDesmontes() {
+  pega('/desmontes', function (j) {
+    if (!j || !j.desmontes) return;
+    desmontes = j.desmontes;
+    desmonteDoCache = !!j.do_cache;
+    indexaFogo();
+    confereDesmonte();
+    desenha();
+  }, function () { });
+}
+
+/* O aviso que importa de verdade: o veiculo esta' dentro de uma area que vai
+   ao fogo. Nao substitui a liberacao da equipe de desmonte — mas ninguem
+   devia descobrir isso olhando o mapa. */
+/* Monta o indice de quem esta' dentro de alguma area. E' o servidor que
+   calcula (ele tem a frota inteira); aqui so' se organiza para desenhar. */
+function indexaFogo() {
+  dentroDoFogo = {};
+  for (var i = 0; i < desmontes.length; i++) {
+    var a = desmontes[i].afetados;
+    if (!a || !a.dentro) continue;
+    for (var k = 0; k < a.dentro.length; k++) {
+      var r = a.dentro[k];
+      dentroDoFogo[r.nome] = { desmonte: desmontes[i].nome, dist: r.distancia_m,
+                               movel: r.movel };
+    }
+  }
+  /* o contador do botao conta ERM: e' ela que precisa de equipe para sair.
+     Caminhao e perfuratriz saem sozinhos, e aparecem em separado na lista. */
+  var n = 0;
+  for (var q in dentroDoFogo)
+    if (dentroDoFogo.hasOwnProperty(q) && !dentroDoFogo[q].movel) n++;
+  var b = document.getElementById('badgeFogo');
+  b.textContent = n;
+  b.style.display = n ? 'inline-block' : 'none';
+}
+
+function rosaDosVentos(graus) {
+  var r = ['N', 'NE', 'L', 'SE', 'S', 'SO', 'O', 'NO'];
+  return r[Math.round(((graus % 360) + 360) % 360 / 45) % 8];
+}
+
+function itemFogo(r, secundario) {
+  var dir = '', deMim = null;
+  if (pos && pos.tem_fix && r.lat !== undefined && r.lat !== null) {
+    dir = rosaDosVentos(rumo({ lat: pos.lat, lon: pos.lon },
+                             { lat: r.lat, lon: r.lon }));
+    deMim = Math.round(metros({ lat: pos.lat, lon: pos.lon },
+                              { lat: r.lat, lon: r.lon }));
+  }
+  return '<div class="itemFogo' + (secundario ? ' secundaria' : '') + '">' +
+         '<span class="selo ' + (r.movel ? 'eq' : 'erm') + '">' +
+         (r.movel ? 'EQUIP' : 'ERM') + '</span>' +
+         '<span class="nm' + (r.movel ? '' : ' erm') + '">' + escapaHtml(r.nome) +
+         '</span>' +
+         '<span class="dir">' + dir + '</span>' +
+         '<span class="dist">' +
+         (deMim === null ? Math.round(r.distancia_m) + ' m'
+                         : (deMim >= 1000 ? (deMim / 1000).toFixed(1) + ' km'
+                                          : deMim + ' m')) +
+         '</span></div>';
+}
+
+/* A lista que o operador precisa: o que sair, a que distancia e para que
+   lado. So' abre com o equipamento parado — em movimento a tela mostra o
+   minimo, e ler lista dirigindo e' o oposto disso. */
+function abrePainelFogo() {
+  if (pos && pos.tem_fix && !pos.parado) {
+    aviso('rota', 'Pare o equipamento para ver a lista do desmonte');
+    return;
+  }
+  var totalErm = 0, html = '';
+  for (var i = 0; i < desmontes.length; i++) {
+    var d = desmontes[i], a = d.afetados || { dentro: [], perto: [] };
+    /* so' ERM: e' ela que precisa de equipe indo ate' la'. Equipamento movel
+       sai por conta propria e nao entra nesta lista. */
+    var erms = [], k;
+    for (k = 0; k < a.dentro.length; k++)
+      if (!a.dentro[k].movel) erms.push(a.dentro[k]);
+    totalErm += erms.length;
+
+    html += '<div class="grupoFogo"><div class="tit">' + escapaHtml(d.nome || '') +
+            '  &middot;  raio ' + Math.round(d.raio_m || 400) + ' m' +
+            (d.n_pontos > 1 ? '  &middot;  ' + d.n_pontos + ' pontos' : '') +
+            '</div><div class="lista">';
+
+    html += '<div class="cabSecao">ERMs que devem sair (' + erms.length + ')</div>';
+    if (!erms.length) {
+      html += '<div id="fogoVazio">Nenhuma ERM dentro do raio.</div>';
+    }
+    for (k = 0; k < erms.length; k++) html += itemFogo(erms[k]);
+    html += '</div></div>';
+  }
+
+  if (!desmontes.length)
+    html = '<div id="fogoVazio">Nenhum desmonte cadastrado. ' +
+           'O cadastro e feito no servidor, em /desmonte.</div>';
+
+  document.getElementById('fogoSub').textContent =
+    (totalErm ? totalErm + ' ERM a retirar' : 'nenhuma ERM a retirar') +
+    (pos && pos.tem_fix ? '  ·  distancia e direcao a partir de voce'
+                        : '  ·  sem GPS: distancia ate o desmonte') +
+    (desmonteDoCache ? '  ·  do cache, servidor fora do ar' : '');
+  document.getElementById('fogoLista').innerHTML = html;
+  document.getElementById('painelFogo').style.display = 'block';
+}
+
+function confereDesmonte() {
+  if (!pos || !pos.tem_fix || !desmontes.length) { aviso('fogo', ''); return; }
+  var eu = { lat: pos.lat, lon: pos.lon };
+  var dentro = null, menor = 1e9, perto = null;
+  for (var i = 0; i < desmontes.length; i++) {
+    var d = desmontes[i];
+    if (d.lat === undefined || d.lat === null) continue;
+    var m = metros(eu, { lat: d.lat, lon: d.lon });
+    var raio = d.raio_m || 400;
+    if (m <= raio && m < menor) { menor = m; dentro = d; }
+    else if (m <= raio + 150 && !perto) perto = { d: d, m: m - raio };
+  }
+  if (dentro) {
+    aviso('fogo', 'VOCE ESTA NA AREA DE DESMONTE: ' + (dentro.nome || '') +
+                  ' — saia do raio de ' + Math.round(dentro.raio_m || 400) + ' m');
+  } else if (perto) {
+    aviso('fogo', 'Area de desmonte a ' + Math.round(perto.m) + ' m: ' +
+                  (perto.d.nome || ''), true);
+  } else {
+    aviso('fogo', '');
+  }
+}
+
+function lePos() {
+  pega('/pos', function (j) {
+    pos = j;
+    if (!j.tem_fix) {
+      aviso('gps', 'SEM POSICAO GPS — nao da para navegar. Verifique o receptor.');
+    } else {
+      aviso('gps', '');
+      if (seguir) { cx = j.lon; cy = j.lat; }
+    }
+    aplicaModo();
+    confereDesmonte();
+    desenha();
+  }, function () { });
+}
+
+function leEstado() {
+  pega('/estado', function (j) {
+    estado = j;
+    if (j.servidor && j.servidor.indexOf('offline') === 0) {
+      aviso('servidor', j.tem_cache
+        ? 'Servidor fora do ar — usando o mapa salvo de ' + j.sinc
+        : 'Servidor fora do ar e sem mapa salvo', true);
+    } else aviso('servidor', '');
+  }, function () { });
+}
+
+function achaLocal(nome) {
+  for (var i = 0; i < locais.length; i++) if (locais[i].nome === nome) return locais[i];
+  return null;
+}
+
+function tracar() {
+  var v = document.getElementById('destino').value;
+  if (!v) return;
+  if (!pos || !pos.tem_fix) {
+    aviso('rota', 'Sem GPS: nao da para tracar rota');
+    return;
+  }
+  if (!pos.parado) {
+    aviso('rota', 'Pare o equipamento para escolher o destino');
+    return;
+  }
+  pedeRota(v, false);
+}
+
+/* Uma rota so'. Quando o destino e' equipamento, ela e' refeita sozinha:
+   a maquina anda, e rota velha para alvo movel engana o operador. */
+function pedeRota(v, automatico) {
+  var equip = v.substring(0, 2) === 'E:';
+  var nome = v.substring(2);
+  var url = equip ? '/rota?equip=' + encodeURIComponent(nome)
+                  : '/rota?para=' + encodeURIComponent(nome);
+  if (!automatico) document.getElementById('ir').disabled = true;
+  pega(url, function (j) {
+    if (!automatico) document.getElementById('ir').disabled = false;
+    if (!j.ok) {
+      if (!equip && j.offline) { rotaLocal(nome, v); return; }
+      if (equip && j.offline) { rotaLocalAteEquip(nome, automatico); return; }
+      if (equip && automatico) {
+        /* alvo sumiu no meio do caminho: avisa e mantem a ultima rota */
+        aviso('rota', 'Nao consegui atualizar a rota ate ' + nome + ': ' +
+                      (j.erro || 'motivo desconhecido'));
+        return;
+      }
+      aviso('rota', 'Sem rota: ' + (j.erro || 'motivo desconhecido'));
+      return;
+    }
+    j.destino_pedido = nome;
+    j.destino_valor = v;
+    if (equip) j.destino_equip = nome;
+    mostraRota(j, j.aviso_destino || '', !automatico);
+  }, function () {
+    if (!automatico) document.getElementById('ir').disabled = false;
+    if (equip) { rotaLocalAteEquip(nome, automatico); return; }
+    rotaLocal(nome, v);
+  });
+}
+
+/* Enquanto o destino for um equipamento, refaz a rota de tempos em tempos. */
+function atualizaRotaMovel() {
+  if (!rota || !rota.destino_equip) return;
+  if (!pos || !pos.tem_fix) return;
+  pedeRota(rota.destino_valor, true);
+}
+
+/* Servidor fora do ar: a malha esta no cache e a ultima frota conhecida
+   tambem. Da' para tracar a rota aqui mesmo, ate onde o equipamento estava.
+   A idade da posicao vai escrita na tela — maquina que anda com posicao
+   velha nao pode parecer atual. */
+function rotaLocalAteEquip(nome, automatico) {
+  if (!nucleo) {
+    if (!automatico) aviso('rota', 'Sem mapa em cache para calcular a rota');
+    return;
+  }
+  var alvo = null, i;
+  for (i = 0; i < frota.length; i++)
+    if (frota[i].nome === nome) { alvo = frota[i]; break; }
+  if (!alvo || !alvo.tem_fix) {
+    if (!automatico)
+      aviso('rota', 'Servidor fora do ar e sem posicao guardada de ' + nome);
+    return;
+  }
+  var r = nucleo.rota(pos.lat, pos.lon, nome, { lat: alvo.lat, lon: alvo.lon });
+  if (!r.ok) {
+    if (!automatico) aviso('rota', 'Sem rota: ' + r.erro);
+    return;
+  }
+  r.destino_pedido = nome;
+  r.destino_valor = 'E:' + nome;
+  r.destino_equip = nome;
+  r.destino_lat = alvo.lat;
+  r.destino_lon = alvo.lon;
+  r.equipamento = alvo;
+  var idade = (frotaIdade === null ? 0 : frotaIdade) + (alvo.idade_fix_s || 0);
+  mostraRota(r, 'Servidor fora do ar: rota calculada aqui, com a posicao de '
+                + Math.round(idade) + ' s atras', !automatico);
+}
+
+function rotaLocal(nome, valor) {
+  if (!nucleo) { aviso('rota', 'Sem mapa em cache para calcular a rota'); return; }
+  var alvo = achaLocal(nome);
+  var r = nucleo.rota(pos.lat, pos.lon, nome,
+                      alvo ? { lat: alvo.lat, lon: alvo.lon } : null);
+  if (!r.ok) { aviso('rota', 'Sem rota: ' + r.erro); return; }
+  r.destino_pedido = nome;
+  r.destino_valor = valor || ('L:' + nome);
+  mostraRota(r, 'Rota calculada no proprio terminal (servidor fora do ar)', true);
+}
+
+function mostraRota(j, nota, enquadrar) {
+  rota = j;
+  aviso('rota', nota, true);
+  var f = formataDist(j.distancia_m);
+  document.getElementById('dist').textContent =
+    f.u === 'metros' ? f.v + ' m' : f.v + ' km';
+  var sub = j.destino_pedido;
+  if (j.equipamento) {
+    sub += '  ·  ' + (j.equipamento.parado ? 'parado'
+                     : Math.round(j.equipamento.vel_kmh || 0) + ' km/h');
+    if (j.equipamento.idade_fix_s !== null && j.equipamento.idade_fix_s !== undefined)
+      sub += '  ·  posicao de ' + Math.round(j.equipamento.idade_fix_s) + ' s atras';
+  }
+  if (j.n_nos) sub += '  ·  ' + j.n_nos + ' nos';
+  if (j.dist_ate_malha_m !== undefined && j.dist_ate_malha_m !== null)
+    sub += '  ·  ' + j.dist_ate_malha_m + ' m ate a via';
+  document.getElementById('sub').textContent = sub;
+  document.getElementById('rodape').style.display = 'block';
+  document.getElementById('limpar').style.display = 'inline-block';
+  if (j.aviso) aviso('ancoragem', j.aviso, true); else aviso('ancoragem', '');
+  posicionaLateral();
+  /* So' na rota nova. A rota ate' equipamento se refaz sozinha a cada 15 s, e
+     reenquadrar ali jogava fora o zoom que o operador tinha acabado de dar. */
+  if (enquadrar) enquadraRota();
+  aplicaModo();
+  desenha();
+}
+
+function enquadraRota() {
+  var co = rota.geometria.coordinates.slice();
+  if (rota.destino_lat !== undefined && rota.destino_lat !== null)
+    co.push([rota.destino_lon, rota.destino_lat]);
+  if (!co.length) return;
+  var a = 1e9, b = -1e9, c = 1e9, d = -1e9;
+  for (var i = 0; i < co.length; i++) {
+    if (co[i][0] < a) a = co[i][0];
+    if (co[i][0] > b) b = co[i][0];
+    if (co[i][1] < c) c = co[i][1];
+    if (co[i][1] > d) d = co[i][1];
+  }
+  cx = (a + b) / 2; cy = (c + d) / 2; seguir = false;
+  var mx = (b - a) * kx(), my = d - c;
+  if (mx > 0 && my > 0)
+    esc = Math.min(C.clientWidth / mx, (C.clientHeight - 200) / my) * 0.85;
+}
+
+function limpar() {
+  rota = null;
+  document.getElementById('rodape').style.display = 'none';
+  document.getElementById('limpar').style.display = 'none';
+  aviso('rota', ''); aviso('ancoragem', '');
+  posicionaLateral();
+  aplicaModo();
+  desenha();
+}
+
+function ponto(e) {
+  if (e.touches && e.touches.length) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  return { x: e.clientX, y: e.clientY };
+}
+function distDois(e) {
+  var a = e.touches[0], b = e.touches[1];
+  return Math.sqrt(Math.pow(a.clientX - b.clientX, 2) + Math.pow(a.clientY - b.clientY, 2));
+}
+
+function inicio(e) {
+  if (e.touches && e.touches.length === 2) { pinca = distDois(e); arraste = null; return; }
+  arraste = ponto(e); seguir = false;
+}
+function move(e) {
+  if (pinca !== null && e.touches && e.touches.length === 2) {
+    var d = distDois(e);
+    if (pinca > 0) zoom(d / pinca);
+    pinca = d;
+    if (e.preventDefault) e.preventDefault();
+    return;
+  }
+  if (!arraste) return;
+  var p = ponto(e);
+  cx -= (p.x - arraste.x) / (esc * kx());
+  cy += (p.y - arraste.y) / esc;
+  arraste = p;
+  if (e.preventDefault) e.preventDefault();
+  desenha();
+}
+function fim() { arraste = null; pinca = null; }
+
+function zoom(f) {
+  esc *= f;
+  if (esc < 200) esc = 200;
+  if (esc > 400000) esc = 400000;
+  desenha();
+}
+function centrar() {
+  if (pos && pos.tem_fix) { cx = pos.lon; cy = pos.lat; seguir = true; desenha(); }
+  else aviso('gps', 'SEM POSICAO GPS — nao da para centrar');
+}
+function trocaPontos() {
+  mostrarLocais = !mostrarLocais;
+  try { localStorage.setItem('ptxnav_locais', mostrarLocais ? '1' : '0'); } catch (e) { }
+  desenha();
+}
+
+function trocaTema() {
+  var dia = document.body.className !== 'dia';
+  document.body.className = dia ? 'dia' : '';
+  document.getElementById('tema').textContent = dia ? 'NOITE' : 'DIA';
+  try { localStorage.setItem('ptxnav_tema', dia ? 'dia' : 'noite'); } catch (e) { }
+  desenha();
+}
+
+var aberturaFechada = false;
+
+function marca(id, estado, texto) {
+  var m = document.getElementById(id);
+  m.className = 'marca ' + estado;
+  m.textContent = estado === 'ok' ? 'OK' : (estado === 'ruim' ? 'X' : '...');
+  if (texto) document.getElementById(id.replace('mk', 'tx')).textContent = texto;
+}
+
+function atualizaAbertura() {
+  if (aberturaFechada) return;
+  var temMapa = !!(malha && malha.features && malha.features.length);
+  marca('mkMapa', temMapa ? 'ok' : 'espera',
+        temMapa ? 'Mapa: ' + malha.features.length + ' trechos' : 'Mapa');
+  var temGps = !!(pos && pos.tem_fix);
+  var motivo = (estado && estado.fonte) ? estado.fonte : 'sem posicao';
+  marca('mkGps', temGps ? 'ok' : 'ruim',
+        temGps ? ('GPS: ' + motivo) : ('GPS: ' + motivo));
+  var online = estado && estado.servidor && estado.servidor.indexOf('offline') !== 0
+               && estado.servidor !== 'nunca contatado';
+  marca('mkSrv', online ? 'ok' : 'ruim',
+        online ? 'Servidor' : 'Servidor: fora do ar');
+  var comFogo = desmontes.length;
+  marca('mkFrota', frota.length ? 'ok' : 'espera',
+        'Frota: ' + frota.length + (comFogo ? '  |  ' + comFogo + ' desmonte' : ''));
+  if (pos && pos.callsign) document.getElementById('abEquip').textContent = pos.callsign;
+  var carimbo = 'tela ' + VERSAO_INTERFACE;
+  if (estado && estado.versao_app) carimbo = estado.versao_app + '  |  ' + carimbo;
+  document.getElementById('abNota').textContent = carimbo;
+}
+
+function fechaAbertura() {
+  aberturaFechada = true;
+  document.getElementById('abertura').style.display = 'none';
+  dimensiona();
+}
+
+function abreMenu() {
+  var e = estado || {};
+  document.getElementById('mnCall').textContent = (pos && pos.callsign) || '-';
+  document.getElementById('mnServidor').value = e.servidor_url || '';
+  document.getElementById('mnServidorVal').textContent = e.servidor_url || '-';
+  document.getElementById('mnGps').textContent = e.gps || '-';
+  /* o PTX manda o device da serial; o tablet Android manda "GPS interno" */
+  document.getElementById('mnFonte').textContent = e.fonte || '-';
+  document.getElementById('mnLinhas').textContent =
+    e.linhas_boas === undefined ? '-'
+      : (e.linhas_boas + ' boas · ' + e.linhas_ruins + ' ruins');
+  document.getElementById('mnMapa').textContent =
+    malha ? malha.features.length + ' trechos' : 'sem mapa';
+  document.getElementById('mnFrota').textContent =
+    frota.length + (desmontes.length ? '  ·  ' + desmontes.length + ' desmonte' : '');
+  document.getElementById('mnSinc').textContent = e.sinc || '-';
+  /* so' o app Android manda estes dois */
+  var versao = e.versao_app || '';
+  document.getElementById('rVersao').style.display = versao ? '' : 'none';
+  document.getElementById('mnVersao').style.display = versao ? '' : 'none';
+  document.getElementById('mnVersao').textContent = versao;
+  /* e este so' quando a execucao anterior caiu */
+  var falha = e.ultima_falha || '';
+  document.getElementById('rFalha').style.display = falha ? '' : 'none';
+  document.getElementById('mnFalha').style.display = falha ? '' : 'none';
+  document.getElementById('mnFalha').textContent = falha;
+  document.getElementById('mnResultado').textContent = '';
+  document.getElementById('menu').style.display = 'block';
+}
+
+function fechaMenu() { document.getElementById('menu').style.display = 'none'; }
+
+function chave(id, ligado) {
+  var b = document.getElementById(id);
+  b.textContent = ligado ? 'SIM' : 'NAO';
+  b.className = 'chave' + (ligado ? ' on' : '');
+}
+
+function salvaServidor() {
+  var url = document.getElementById('mnServidor').value.replace(/\/+$/, '');
+  if (!url) { document.getElementById('mnResultado').textContent = 'Endereco vazio'; return; }
+  document.getElementById('mnResultado').textContent = 'Salvando';
+  var x = new XMLHttpRequest();
+  /* o endereco vai na URL e tambem no corpo: no PTX quem le' e' o corpo; no
+     Android o WebView nao entrega o corpo na intercepcao, e sobra a URL.
+     Mandando os dois, a pagina e' a mesma nas duas plataformas. */
+  x.open('POST', '/config?servidor=' + encodeURIComponent(url), true);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onreadystatechange = function () {
+    if (x.readyState !== 4) return;
+    var j = null;
+    try { j = JSON.parse(x.responseText); } catch (e) { }
+    document.getElementById('mnResultado').textContent =
+      (j && j.ok) ? 'Salvo: ' + j.servidor : 'Falhou: ' + ((j && j.erro) || x.status);
+    if (j && j.ok) { leEstado(); leFrota(); leDesmontes(); }
+  };
+  x.send(JSON.stringify({ servidor: url }));
+}
+
+function testaServidor() {
+  document.getElementById('mnResultado').textContent = 'Testando';
+  pega('/estado', function (j) {
+    var online = j.servidor && j.servidor.indexOf('offline') !== 0
+                 && j.servidor !== 'nunca contatado';
+    document.getElementById('mnResultado').textContent =
+      online ? 'No ar. Mapa de ' + j.sinc : 'Sem resposta';
+  }, function (e) {
+    document.getElementById('mnResultado').textContent = 'Falhou: ' + e;
+  });
+}
+
+C.addEventListener('touchstart', inicio, false);
+C.addEventListener('touchmove', move, false);
+C.addEventListener('touchend', fim, false);
+C.addEventListener('mousedown', inicio, false);
+C.addEventListener('mousemove', move, false);
+window.addEventListener('mouseup', fim, false);
+C.addEventListener('wheel', function (e) {
+  e.preventDefault(); zoom(e.deltaY < 0 ? 1.25 : 0.8);
+}, false);
+window.addEventListener('resize', dimensiona, false);
+
+document.getElementById('ir').onclick = tracar;
+document.getElementById('limpar').onclick = limpar;
+document.getElementById('mais').onclick = function () { zoom(1.6); };
+document.getElementById('menos').onclick = function () { zoom(0.625); };
+document.getElementById('eu').onclick = centrar;
+document.getElementById('tema').onclick = trocaTema;
+document.getElementById('btMenu').onclick = abreMenu;
+document.getElementById('fecharMenu').onclick = fechaMenu;
+document.getElementById('abEntrar').onclick = fechaAbertura;
+document.getElementById('mnSalvar').onclick = salvaServidor;
+document.getElementById('mnTestar').onclick = testaServidor;
+
+document.getElementById('chPontos').onclick = function () {
+  trocaPontos(); chave('chPontos', mostrarLocais);
+};
+document.getElementById('chFoto').onclick = function () {
+  mostrarFoto = !mostrarFoto;
+  chave('chFoto', mostrarFoto);
+  try { localStorage.setItem('ptxnav_foto', mostrarFoto ? '1' : '0'); } catch (e) { }
+  desenha();
+};
+document.getElementById('chTema').onclick = function () {
+  trocaTema();
+  document.getElementById('chTema').textContent =
+    document.body.className === 'dia' ? 'DIA' : 'NOITE';
+};
+function trocaDesmonte() {
+  mostrarDesmonte = !mostrarDesmonte;
+  chave('chDesmonte', mostrarDesmonte);
+  document.getElementById('desmonte').style.background =
+    mostrarDesmonte ? (document.body.className === 'dia' ? '#8c2323' : '#8c2323') : '';
+  try { localStorage.setItem('ptxnav_desmonte', mostrarDesmonte ? '1' : '0'); } catch (e) { }
+  desenha();
+}
+document.getElementById('chDesmonte').onclick = trocaDesmonte;
+document.getElementById('desmonte').onclick = abrePainelFogo;
+document.getElementById('fecharFogo').onclick = function () {
+  document.getElementById('painelFogo').style.display = 'none';
+};
+document.getElementById('destino').onchange = aplicaModo;
+
+try {
+  if (localStorage.getItem('ptxnav_tema') === 'dia') {
+    document.body.className = 'dia';
+    document.getElementById('tema').textContent = 'NOITE';
+  }
+  if (localStorage.getItem('ptxnav_locais') === '1') mostrarLocais = true;
+  if (localStorage.getItem('ptxnav_desmonte') === '0') mostrarDesmonte = false;
+  if (localStorage.getItem('ptxnav_foto') === '0') mostrarFoto = false;
+} catch (e) { }
+chave('chPontos', mostrarLocais);
+chave('chDesmonte', mostrarDesmonte);
+document.getElementById('chTema').textContent =
+  document.body.className === 'dia' ? 'DIA' : 'NOITE';
+document.getElementById('desmonte').style.background =
+  mostrarDesmonte ? '#8c2323' : '';
+
+dimensiona();
+carregaMapa();
+carregaFoto();
+lePos();
+leEstado();
+leFrota();
+leDesmontes();
+setInterval(atualizaAbertura, 700);
+/* nao fecha sozinho: o operador confere a checagem e entra quando quiser */
+setInterval(lePos, 1000);
+setInterval(leFrota, 8000);          /* posicao dos equipamentos */
+setInterval(atualizaRotaMovel, 15000); /* rota ate equipamento se refaz sozinha */
+setInterval(leEstado, 20000);
+setInterval(leDesmontes, 60000);
+setInterval(tentaFoto, 20000);       /* foto: insiste ate' o servidor responder */
+setInterval(carregaMapa, 300000);   /* pega a malha nova quando a lavra muda */
+</script>
+</body>
+</html>

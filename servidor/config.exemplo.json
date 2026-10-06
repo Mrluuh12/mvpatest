@@ -1,0 +1,40 @@
+{
+  "_leia": "Renomeie para config.json e ponha ao lado do servidor_rotas.exe. Com ele, abrir o programa e' so' dar dois cliques: nao precisa de linha de comando. Qualquer opcao passada na linha de comando vence o que estiver aqui.",
+
+  "_db": "Caminho do Modular.db. Relativo vale a partir da pasta do programa. Nao sabe qual e' o certo? Rode: servidor_rotas.exe --procurar-db C:\\Modular",
+  "db": "Modular.db",
+
+  "porta": 5000,
+  "endereco": "0.0.0.0",
+
+  "_intervalo": "Segundos entre checagens do Modular.db. So' reprocessa se o arquivo mudou.",
+  "intervalo": 900,
+
+  "_log": "Recomendado no Windows: console em QuickEdit congela o processo se alguem clicar dentro dele.",
+  "log": "servidor.log",
+
+  "_foto": "Pasta dos ladrilhos da foto aerea, gerada por --gerar-foto. Sem ela o mapa desenha em fundo liso, como antes.",
+  "foto": "foto",
+
+  "_rajant": "Posicao dos equipamentos, lida do GPS dos radios. Sem este bloco o servidor roda igual, so' sem a frota.",
+  "rajant": {
+    "cache": "rajant_ips_cache.json",
+    "senha": "SENHA_DO_RADIO",
+    "intervalo": 10
+  },
+
+  "_atualizar_db": "Busca o Modular.db nos proprios PTX: escolhe o que tiver o arquivo MAIS NOVO, confere se presta e so' entao troca. A primeira busca acontece ao ligar o servidor, antes de ele abrir a porta; depois se repete a cada intervalo_h. Tire este bloco para desligar.",
+  "_espera_s": "Quanto o arranque espera pela busca inicial. Passado esse tempo o servidor sobe com o banco que ja' tem e a busca continua sozinha. Ponha esperar_no_inicio em false para nao esperar nada.",
+  "_senha_aviso": "A senha fica em texto puro aqui. Se isso for problema na sua politica, restrinja a permissao do arquivo.",
+  "_hosts": "Ponha \"banco\" para ler a lista de terminais do proprio Modular.db (tabela HostAddress, que liga CA-1001 a 10.188.98.1). A lista se mantem sozinha quando a mina poe ou tira terminal. Tambem aceita faixa na mao: \"10.188.98.1-254\".",
+  "atualizar_db": {
+    "hosts": "banco",
+    "prefixo": "10.188.98.",
+    "usuario": "mms",
+    "senha": "modular",
+    "caminho": "/home/mms/DE/Modular.db",
+    "intervalo_h": 6,
+    "esperar_no_inicio": true,
+    "espera_s": 120
+  }
+}

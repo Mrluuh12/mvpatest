@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Seta de navegacao, igual a que marca a posicao propria no mapa.
+     Vetor em vez de PNG: um arquivo so' serve todas as densidades. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#0F1720"
+        android:pathData="M0,0h108v108h-108z" />
+
+    <path
+        android:fillColor="#33CCFF"
+        android:pathData="M54,22 L76,82 L54,70 L32,82 Z" />
+</vector>
