@@ -85,6 +85,7 @@ class AppAndroid:
         self.gps = gps
         self.cache = {}
         self.orientacao = "paisagem"
+        self.falado = []           # o que o TextToSpeech teria dito
         self.cache_foto = {}
         self.frota_guardada = ""
         self.estado_servidor = "nunca contatado"
@@ -194,6 +195,7 @@ class AppAndroid:
                 "versao_app": self.versao_app,
                 "hash": self.hash_local, "sinc": self.sinc,
                 "orientacao": self.orientacao,
+                "voz": "pronta",
                 "tem_cache": "malha.json" in self.cache}
 
     def muda_orientacao(self, q):
@@ -260,6 +262,10 @@ def cria_servidor(app, porta=0):
             if c == "/desmontes": return self._envia(app.desmontes())
             if c == "/rota":      return self._envia(app.rota(q))
             if c == "/orientacao": return self._envia(app.muda_orientacao(q))
+            if c == "/falar":
+                app.falado.append(((q.get("t") or [""])[0],
+                                   (q.get("urgente") or [""])[0] == "1"))
+                return self._envia('{"ok":true}')
             if c == "/config":    return self._envia(app.config(q))
             self.send_response(404); self.send_header("Content-Length", "0")
             self.end_headers()

@@ -39,6 +39,7 @@ class MainActivity : Activity() {
     private lateinit var posicao: Posicao
     private lateinit var sinc: Sincronizacao
     private lateinit var api: Api
+    private var voz: Voz? = null
 
     private val agenda = Executors.newSingleThreadScheduledExecutor()
 
@@ -121,9 +122,11 @@ class MainActivity : Activity() {
         posicao = Posicao(this).apply { limiteParadoKmh = config.limiteParadoKmh }
         sinc = Sincronizacao(this, config)
         sinc.semeiaSePreciso(this)
+        voz = Voz(this)
         api = Api(posicao, sinc, config).apply {
             ultimaFalha = falhaAnterior
             versaoApp = carimbo()
+            voz = this@MainActivity.voz
         }
 
         // tela sempre acesa: o operador nao vai destravar o tablet dirigindo
@@ -173,7 +176,9 @@ class MainActivity : Activity() {
                     return resposta(api.mudaConfig(
                         """{"servidor":"${Json.escapa(novo)}"}"""))
                 }
-                api.responde(u.path ?: "", u.query)?.let { return it }
+                // consulta crua: Api.parametros decodifica. Com u.query ela era
+                // decodificada duas vezes e "+" ou "%" num nome estragavam o texto
+                api.responde(u.path ?: "", u.encodedQuery)?.let { return it }
                 return carregador.shouldInterceptRequest(u)
             }
         }
@@ -279,6 +284,7 @@ class MainActivity : Activity() {
         // se a montagem falhou, estes campos nao existem: tocar neles aqui
         // trocaria a tela de erro por outro fechamento
         if (montou) posicao.parar()
+        voz?.encerra()
         agenda.shutdownNow()
         super.onDestroy()
     }

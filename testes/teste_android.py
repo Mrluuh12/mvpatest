@@ -11,7 +11,7 @@ Api.kt, e a pagina real roda em cima dele no Chromium.
 O teste de consistencia compara os campos do simulador com os do Kotlin: se
 um lado mudar sem o outro, acusa aqui em vez de acusar no tablet.
 """
-import json, os, re, shutil, subprocess, sys, tempfile, threading, time, unittest
+import json, math, os, re, shutil, subprocess, sys, tempfile, threading, time, unittest
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(RAIZ, "testes"))
@@ -784,6 +784,215 @@ class TesteAppNoNavegador(unittest.TestCase):
         finally:
             self.app.orientacao = antes
             self.pagina.click("#fecharMenu")
+
+    # ------------------------------------------------ guia falado
+    # O veiculo e' levado ao longo da rota pelo GPS do simulador, ponto a
+    # ponto, e o que o tablet teria falado fica em app.falado.
+
+    def _destino_com_virada(self):
+        """Um local cuja rota tem uma virada de verdade, longe do comeco."""
+        d = self.pagina.evaluate("""() => {
+            var idx = Guia.juncoes(malha), melhor = null;
+            for (var i = 0; i < locais.length; i++) {
+              var L = locais[i];
+              var r = nucleo.rota(pos.lat, pos.lon, L.nome, {lat: L.lat, lon: L.lon});
+              if (!r.ok || r.distancia_m > 2500) continue;
+              var ms = Guia.manobras(r.geometria.coordinates, idx);
+              var ok = ms.filter(function (m) { return m.tipo === 'vire' && m.dist > 320; });
+              if (ok.length && (!melhor || r.distancia_m < melhor.d))
+                melhor = { nome: L.nome, d: r.distancia_m };
+            }
+            return melhor;
+        }""")
+        self.assertIsNotNone(d, "a malha de teste nao tem rota com virada")
+        return d["nome"]
+
+    def _traca(self, nome):
+        self.pagina.evaluate("(n) => { limpar(); pedeRota('L:' + n, false); }", nome)
+        fim = time.time() + 30
+        while time.time() < fim:
+            if self.pagina.evaluate("(n) => !!(rota && rota.destino_pedido === n "
+                                    "&& guia)", nome):
+                return self.pagina.evaluate("() => rota.geometria.coordinates")
+            time.sleep(0.2)
+        raise AssertionError("a rota ate " + nome + " nao veio")
+
+    def _vai(self, lon, lat, vel=30.0, cog=0.0):
+        """Poe o GPS no ponto e espera a tela processar essa leitura."""
+        self.gps.registra(lat, lon, vel_kmh=vel, cog=cog)
+        self.pagina.evaluate("""([la, lo]) => new Promise(function (ok) {
+            var fim = Date.now() + 5000;
+            (function vez() {
+              lePos();
+              setTimeout(function () {
+                if ((pos && Math.abs(pos.lat - la) < 1e-7 &&
+                     Math.abs(pos.lon - lo) < 1e-7) || Date.now() > fim) ok();
+                else vez();
+              }, 60);
+            })();
+        })""", [lat, lon])
+
+    @staticmethod
+    def _pontos(co, passo=20.0):
+        """A rota em pontos a cada `passo` metros, com o rumo de cada um."""
+        k = math.cos(math.radians(co[0][1]))
+        saida = []
+        for a, b in zip(co, co[1:]):
+            dx = (b[0] - a[0]) * 111320 * k; dy = (b[1] - a[1]) * 110540
+            d = math.hypot(dx, dy)
+            rumo = (math.degrees(math.atan2(dx, dy)) + 360) % 360
+            n = max(1, int(d // passo))
+            for i in range(n):
+                t = i / n
+                saida.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, rumo))
+        saida.append((co[-1][0], co[-1][1], saida[-1][2] if saida else 0.0))
+        return saida
+
+    def _falas(self):
+        # aviso de desmonte do teste 05 pode sobrar no cache da tela
+        return [f for f in self.app.falado if not f[0].startswith("Atenção")]
+
+    def _volta_ao_inicio(self):
+        self.pagina.evaluate("() => limpar()")
+        self.gps.registra(self.LAT, self.LON, vel_kmh=0.0, cog=45.0)
+        self.espera(self.pagina, "() => pos && pos.parado", "o veiculo parar")
+
+    def test_15_rota_falada_do_inicio_ao_fim(self):
+        self.espera(self.pagina, "() => ehAndroid === true", "a tela do tablet")
+        nome = self._destino_com_virada()
+        del self.app.falado[:]
+        try:
+            co = self._traca(nome)
+            n_manobras = self.pagina.evaluate("() => guia.lista.length")
+            self.assertTrue(self._falas() and
+                            self._falas()[0][0].startswith("Rota traçada até " + nome),
+                            self._falas())
+            faixa = None
+            for lon, lat, rumo in self._pontos(co):
+                self._vai(lon, lat, cog=rumo)
+                if faixa is None:
+                    faixa = self.pagina.evaluate("""() => {
+                        var e = document.getElementById('mvManobra');
+                        return e.style.display === 'block' ? e.textContent : null; }""")
+            falas = self._falas()
+            textos = [f[0] for f in falas]
+
+            longe = [f for f in falas if f[0].startswith("Em ") and "vire" in f[0]]
+            perto = [f for f in falas if f[0].startswith("Vire ")]
+            self.assertTrue(longe, "nao avisou a virada com antecedencia: %r" % textos)
+            self.assertTrue(perto, "nao avisou a virada na hora: %r" % textos)
+            self.assertTrue(all(f[1] for f in perto), "a virada na hora tem que cortar a fila")
+            self.assertFalse(any(f[1] for f in longe), "o aviso de longe nao corta a fila")
+            self.assertLess(textos.index(longe[0][0]), textos.index(perto[0][0]))
+            # cada manobra: no maximo um aviso de longe e um na hora. Texto
+            # repetido nao basta para pegar isso — a distancia muda a frase
+            self.assertLessEqual(len(longe), n_manobras, "repetiu o aviso: %r" % textos)
+            self.assertLessEqual(len(perto), n_manobras, "repetiu o aviso: %r" % textos)
+            self.assertTrue(textos[-1].startswith("Você chegou"), textos)
+            self.assertIsNotNone(faixa, "a faixa nao mostrou a proxima manobra")
+            self.assertRegex(faixa, r"^(Em \d+ m: |Vire |Mantenha|Faça)")
+        finally:
+            self._volta_ao_inicio()
+
+    def test_16_saiu_da_rota_recalcula_e_avisa(self):
+        nome = self._destino_com_virada()
+        try:
+            co = self._traca(nome)
+            pts = self._pontos(co)[:6]               # ~100 m na rota
+            for lon, lat, rumo in pts:
+                self._vai(lon, lat, cog=rumo)
+            primeira = self.pagina.evaluate("() => JSON.stringify(rota.geometria)")
+            del self.app.falado[:]
+            # sai pela perpendicular, se afastando a cada leitura
+            lon0, lat0, rumo = pts[-1]
+            k = math.cos(math.radians(lat0))
+            lado = math.radians(rumo + 90)
+            for dist in (45, 60, 75, 90, 105):
+                self._vai(lon0 + dist * math.sin(lado) / (111320 * k),
+                          lat0 + dist * math.cos(lado) / 110540, cog=rumo + 90)
+            fim = time.time() + 20
+            while time.time() < fim and not any(
+                    f[0].startswith("Rota recalculada") for f in self._falas()):
+                time.sleep(0.2)
+            textos = [f[0] for f in self._falas()]
+            self.assertTrue(any(t.startswith("Rota recalculada") for t in textos),
+                            "saiu da rota e nada foi dito: %r" % textos)
+            self.assertNotEqual(primeira,
+                                self.pagina.evaluate("() => JSON.stringify(rota.geometria)"),
+                                "a rota nao foi refeita")
+            self.assertEqual(sum(t.startswith("Rota recalculada") for t in textos), 1,
+                             "recalculou mais de uma vez: %r" % textos)
+        finally:
+            self._volta_ao_inicio()
+
+    def test_17_no_ptx_nada_e_falado(self):
+        """A mesma tela sem o tablet: sem voz, sem faixa de manobra."""
+        def sem_plataforma(rota_pw):
+            r = rota_pw.fetch()
+            j = r.json(); j.pop("plataforma", None)
+            rota_pw.fulfill(response=r, body=json.dumps(j))
+        nome = self._destino_com_virada()
+        self.pagina.route("**/estado", sem_plataforma)
+        try:
+            self.pagina.evaluate("() => { ehAndroid = false; }")
+            del self.app.falado[:]
+            co = self._traca_sem_guia(nome)
+            vistos = set()
+            for lon, lat, rumo in self._pontos(co)[:40]:
+                self._vai(lon, lat, cog=rumo)
+                vistos.add(self.pagina.evaluate(
+                    "() => document.getElementById('mvManobra').style.display"))
+            self.assertEqual(self.app.falado, [])
+            self.assertEqual(vistos - {"none", ""}, set())
+        finally:
+            self.pagina.unroute("**/estado")
+            self.pagina.evaluate("() => { ehAndroid = true; }")
+            self._volta_ao_inicio()
+
+    def _traca_sem_guia(self, nome):
+        self.pagina.evaluate("(n) => { limpar(); pedeRota('L:' + n, false); }", nome)
+        fim = time.time() + 30
+        while time.time() < fim:
+            if self.pagina.evaluate("(n) => !!(rota && rota.destino_pedido === n)", nome):
+                return self.pagina.evaluate("() => rota.geometria.coordinates")
+            time.sleep(0.2)
+        raise AssertionError("a rota ate " + nome + " nao veio")
+
+    def test_18_voz_desliga_pelo_menu(self):
+        try:
+            self.pagina.click("#btMenu")
+            self.pagina.click("#chVoz")
+            self.assertEqual(self.pagina.inner_text("#chVoz").strip(), "NAO")
+            del self.app.falado[:]
+            self.pagina.evaluate("() => fala('teste desligado')")
+            time.sleep(0.5)
+            self.assertEqual(self.app.falado, [])
+            self.pagina.click("#chVoz")
+            self.assertEqual(self.pagina.inner_text("#chVoz").strip(), "SIM")
+            fim = time.time() + 5
+            while time.time() < fim and not self.app.falado:
+                time.sleep(0.1)
+            self.assertEqual(self.app.falado, [("Voz ligada.", True)])
+        finally:
+            self.pagina.evaluate("() => { vozLigada = true; chave('chVoz', true); }")
+            self.pagina.click("#fecharMenu")
+
+    def test_19_desmonte_e_falado_so_na_mudanca(self):
+        # sem desmonte guardado, o laco de posicao nao fala nada por conta
+        self.pagina.evaluate("() => { desmontes = []; confereDesmonte(); }")
+        del self.app.falado[:]
+        self.pagina.evaluate("""() => { nivelFogo = '';
+            falaFogo('perto', 120); falaFogo('perto', 110);
+            falaFogo('dentro', 0); falaFogo('dentro', 0); falaFogo('', 0); }""")
+        fim = time.time() + 5
+        while time.time() < fim and len(self.app.falado) < 2:
+            time.sleep(0.1)
+        time.sleep(0.3)
+        atencao = [f for f in self.app.falado if f[0].startswith("Atenção")]
+        self.assertEqual([f[0] for f in atencao],
+                         ["Atenção: área de desmonte a 120 metros.",
+                          "Atenção: você está na área de desmonte."])
+        self.assertTrue(all(f[1] for f in atencao))
 
 
 if __name__ == "__main__":

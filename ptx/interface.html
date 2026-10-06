@@ -77,6 +77,10 @@ body.dia #mvUnid{color:#333}
 #mvDestino{font-size:22px;font-weight:bold;margin-top:4px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #mvNota{font-size:14px;color:#9ab;margin-top:2px}
+/* proxima manobra (so' no tablet): o que fazer no proximo cruzamento */
+#mvManobra{font-size:28px;font-weight:bold;margin-top:6px;color:#ffd23f;
+  display:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.dia #mvManobra{color:#7a4a00}
 body.dia #mvNota{color:#456}
 
 /* --- abertura: o operador sobe no equipamento e ve' de cara se da' para
@@ -218,6 +222,10 @@ body.dia #mnAvisos .guardado.fixo{background:#f7d0d0}
     <div class="item" id="linhaTela" style="display:none">
       <span class="rot">Tela</span>
       <button class="chave" id="chTela">PAISAGEM</button></div>
+    <div class="item" id="linhaVoz" style="display:none">
+      <span class="rot">Voz</span>
+      <button class="chave on" id="chVoz">SIM</button></div>
+    <div id="mnVozEstado" style="display:none;font-size:13px;color:#d9a400;margin:-2px 0 6px"></div>
 
     <div id="blocoAvisos" style="display:none">
       <h3>Avisos</h3>
@@ -277,6 +285,7 @@ body.dia #mnAvisos .guardado.fixo{background:#f7d0d0}
   <canvas id="mvSeta" width="96" height="96"></canvas>
   <div id="mvTexto">
     <div><span id="mvDist">--</span><span id="mvUnid">metros</span></div>
+    <div id="mvManobra"></div>
     <div id="mvDestino"></div>
     <div id="mvNota">Em movimento — pare para mudar o destino</div>
   </div>
@@ -516,12 +525,166 @@ NucleoRota.prototype.sAoLongo = function (anc) {
 
 if (typeof module !== 'undefined' && module.exports) module.exports = NucleoRota;
 /* === FIM NUCLEO ROTA ================================================= */
+
+/* === INICIO GUIA ===================================================== */
+/* Instrucoes de manobra a partir da rota tracada. Geometria pura: nao toca no
+   DOM nem em variavel da pagina — o teste em node executa este bloco sozinho.
+
+   Cruzamento se reconhece pela propria malha: ponta de trecho onde chegam
+   tres ou mais trechos. Nao depende de nome de no', e por isso vale para rota
+   do servidor e para a calculada no tablet. Dobra de estrada no meio de um
+   trecho nao e' manobra: so' cruzamento gera instrucao.
+
+   Os textos levam acento: sao falados. Sem cedilha, "faca o retorno" sai
+   com som de faca de cozinha. */
+var Guia = (function () {
+  var OLHAR_M = 15;        /* rumo medido a 15 m do cruzamento: o desenho da
+                              estrada faz zigue-zague bem perto do no' */
+  var MIN_GRAUS = 25;      /* abaixo disto e' "siga em frente" e nao se fala */
+  var MESMO_NO_M = 3;      /* pontas de trecho a menos disto sao o mesmo no':
+                              trechos desenhados a mao nao fecham no milimetro */
+  var CELULA = 0.00005;    /* ~5 m: maior que MESMO_NO_M, basta olhar 3x3 */
+
+  function chave(p) { return p[0].toFixed(6) + ',' + p[1].toFixed(6); }
+  function celula(x, y) { return x + ':' + y; }
+
+  function m(a, b) {                               /* a, b: [lon, lat] */
+    var k = Math.cos(a[1] * Math.PI / 180);
+    var dx = (b[0] - a[0]) * 111320 * k, dy = (b[1] - a[1]) * 110540;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function rumo(a, b) {
+    var k = Math.cos(a[1] * Math.PI / 180);
+    var dx = (b[0] - a[0]) * 111320 * k, dy = (b[1] - a[1]) * 110540;
+    return (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+  }
+
+  /* ponto a `dist` metros do vertice i, andando para tras (passo -1) ou
+     para frente (passo +1) ao longo da linha */
+  function andar(co, i, dist, passo) {
+    var acum = 0, j = i;
+    while (j + passo >= 0 && j + passo < co.length) {
+      var d = m(co[j], co[j + passo]);
+      if (acum + d >= dist) {
+        var t = (dist - acum) / d;
+        return [co[j][0] + (co[j + passo][0] - co[j][0]) * t,
+                co[j][1] + (co[j + passo][1] - co[j][1]) * t];
+      }
+      acum += d; j += passo;
+    }
+    return co[j];
+  }
+
+  /* Indice das pontas de trecho da malha, por celula de ~5 m. */
+  function juncoes(malha) {
+    var idx = {};
+    var f = (malha && malha.features) || [];
+    function poe(p) {
+      var k = celula(Math.floor(p[0] / CELULA), Math.floor(p[1] / CELULA));
+      (idx[k] = idx[k] || []).push(p);
+    }
+    for (var i = 0; i < f.length; i++) {
+      var co = f[i].geometry && f[i].geometry.coordinates;
+      if (!co || co.length < 2) continue;
+      /* trecho fechado conta: a estrada esta' la', o operador ve o
+         cruzamento mesmo sem poder entrar */
+      poe(co[0]); poe(co[co.length - 1]);
+    }
+    return idx;
+  }
+
+  /* Quantos trechos terminam neste ponto. */
+  function grau(idx, p) {
+    var cx = Math.floor(p[0] / CELULA), cy = Math.floor(p[1] / CELULA), n = 0;
+    for (var dx = -1; dx <= 1; dx++)
+      for (var dy = -1; dy <= 1; dy++) {
+        var l = idx[celula(cx + dx, cy + dy)];
+        if (l) for (var i = 0; i < l.length; i++) if (m(p, l[i]) <= MESMO_NO_M) n++;
+      }
+    return n;
+  }
+
+  function classifica(graus) {
+    var g = Math.abs(graus), lado = graus > 0 ? 'direita' : 'esquerda';
+    if (g >= 135) return { tipo: 'retorno', lado: lado, texto: 'faça o retorno' };
+    if (g >= 60)  return { tipo: 'vire', lado: lado, texto: 'vire à ' + lado };
+    return { tipo: 'mantenha', lado: lado, texto: 'mantenha-se à ' + lado };
+  }
+
+  function manobras(co, idx) {
+    var lista = [], acum = 0, ultimoNo = -Infinity;
+    if (!co || co.length < 3) return lista;
+    for (var i = 1; i < co.length - 1; i++) {
+      acum += m(co[i - 1], co[i]);
+      if (grau(idx, co[i]) < 3) continue;
+      /* a ponta de um trecho e a do seguinte, a um metro uma da outra, sao
+         o mesmo cruzamento: uma instrucao so' */
+      var repetido = acum - ultimoNo <= MESMO_NO_M;
+      ultimoNo = acum;
+      if (repetido) continue;
+      var bIn = rumo(andar(co, i, OLHAR_M, -1), co[i]);
+      var bOut = rumo(co[i], andar(co, i, OLHAR_M, +1));
+      var delta = ((bOut - bIn + 540) % 360) - 180;   /* + e' para a direita */
+      if (Math.abs(delta) < MIN_GRAUS) continue;
+      var c = classifica(delta);
+      lista.push({ dist: acum, graus: Math.round(delta), tipo: c.tipo,
+                   lado: c.lado, texto: c.texto, lon: co[i][0], lat: co[i][1] });
+    }
+    return lista;
+  }
+
+  /* Onde o veiculo esta' ao longo da rota: projecao no segmento mais
+     proximo, e nao o vertice mais proximo — com trechos de centenas de
+     metros, o vertice erraria a distancia por isso tudo. */
+  function progresso(co, lon, lat) {
+    var melhor = { ao_longo: 0, desvio: Infinity }, acum = 0;
+    for (var i = 0; i + 1 < co.length; i++) {
+      var a = co[i], b = co[i + 1];
+      var k = Math.cos(lat * Math.PI / 180);
+      var ax = (a[0] - lon) * 111320 * k, ay = (a[1] - lat) * 110540;
+      var bx = (b[0] - lon) * 111320 * k, by = (b[1] - lat) * 110540;
+      var vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy;
+      var t = L2 ? Math.max(0, Math.min(1, -(ax * vx + ay * vy) / L2)) : 0;
+      var px = ax + vx * t, py = ay + vy * t;
+      var d = Math.sqrt(px * px + py * py), seg = Math.sqrt(L2);
+      if (d < melhor.desvio) melhor = { ao_longo: acum + seg * t, desvio: d };
+      acum += seg;
+    }
+    melhor.total = acum;
+    return melhor;
+  }
+
+  function proxima(lista, aoLongo) {
+    for (var i = 0; i < lista.length; i++)
+      if (lista[i].dist > aoLongo + 3) return lista[i];
+    return null;
+  }
+
+  function arredonda(d) {
+    if (d >= 1000) return (Math.round(d / 100) / 10).toString().replace('.', ',') +
+                          ' quilômetros';
+    if (d >= 300) return (Math.round(d / 50) * 50) + ' metros';
+    return (Math.round(d / 10) * 10) + ' metros';
+  }
+
+  function frase(man, distancia) {
+    var acao = man.texto.charAt(0).toUpperCase() + man.texto.slice(1);
+    if (distancia < 50) return acao + '.';
+    return 'Em ' + arredonda(distancia) + ', ' + man.texto + '.';
+  }
+
+  return { juncoes: juncoes, grau: grau, manobras: manobras, progresso: progresso,
+           proxima: proxima, frase: frase, arredonda: arredonda, chave: chave };
+})();
+if (typeof module !== 'undefined') module.exports = Guia;
+/* === FIM GUIA ======================================================== */
 </script>
 
 <script>
 /* Carimbo da tela. Aparece na abertura e no menu: ja' se perdeu tempo
    discutindo se o aparelho estava com a versao nova ou a velha. */
-var VERSAO_INTERFACE = '2026-10-06 · retrato, avisos no menu';
+var VERSAO_INTERFACE = '2026-10-06 · guia falado';
 
 var malha = null, locais = [], areas = null, rota = null;
 var frota = [], frotaAssinatura = '', frotaIdade = null;
@@ -1125,6 +1288,127 @@ function trocaOrientacao() {
   }, function () { });
 }
 
+/* --- guia falado (so' no tablet) ------------------------------------
+   A voz fala o que a faixa mostra: rota tracada, a proxima manobra duas
+   vezes (de longe, com a distancia, e na hora), rota recalculada quando o
+   operador sai do caminho, e a chegada. No PTX nada disso existe. */
+var vozLigada = true;
+var guia = null;         /* manobras da rota atual e o que ja' foi dito */
+var grauMalha = null;    /* indice de cruzamentos; refeito quando a malha muda */
+var recalculando = null; /* destino que esta' sendo recalculado */
+var GUIA_LONGE_M = 250, GUIA_PERTO_M = 50, CHEGOU_M = 25;
+/* Fora da rota: longe do tracado por 3 leituras seguidas (3 s), andando.
+   Uma leitura so' e' salto de GPS. O intervalo minimo evita pedir rota a
+   cada segundo enquanto o operador manobra numa praca. */
+var FORA_DA_ROTA_M = 35, FORA_LEITURAS = 3, RECALCULO_MIN_MS = 20000;
+var nivelFogo = '', tinhaFix = false;
+
+/* urgente corta o que estiver sendo dito; o resto entra na fila */
+function fala(texto, urgente) {
+  if (!ehAndroid || !vozLigada || !texto) return;
+  pega('/falar?t=' + encodeURIComponent(texto) + (urgente ? '&urgente=1' : ''),
+       function () { }, function () { });
+}
+
+function preparaGuia(j, enquadrar) {
+  if (!ehAndroid) return;
+  if (!grauMalha && malha) grauMalha = Guia.juncoes(malha);
+  var co = (j.geometria && j.geometria.coordinates) || [];
+  var nova = !!enquadrar;
+  var herda = guia && !nova && guia.destino === j.destino_valor;
+  guia = { destino: j.destino_valor,
+           lista: grauMalha ? Guia.manobras(co, grauMalha) : [],
+           ditas: herda ? guia.ditas : {},
+           chegou: herda ? guia.chegou : false,
+           ultimoRecalculo: herda ? guia.ultimoRecalculo : 0,
+           naRota: false, fora: 0 };
+  var resumo = Guia.arredonda(j.distancia_m || 0) + '.';
+  if (!nova && recalculando === j.destino_valor) fala('Rota recalculada. ' + resumo);
+  else if (nova) fala('Rota traçada até ' + (j.destino_pedido || 'o destino') + '. ' + resumo);
+  recalculando = null;
+}
+
+function acompanhaGuia() {
+  var el = document.getElementById('mvManobra');
+  el.style.display = 'none';
+  if (!ehAndroid || !rota || !guia || !pos || !pos.tem_fix) return;
+  var co = rota.geometria && rota.geometria.coordinates;
+  if (!co || co.length < 2) return;
+  var p = Guia.progresso(co, pos.lon, pos.lat);
+
+  /* A rota comeca na via, e o veiculo pode estar fora dela (praca, oficina):
+     so' conta como "saiu da rota" depois de ter estado nela. */
+  if (p.desvio <= FORA_DA_ROTA_M - 10) { guia.naRota = true; guia.fora = 0; }
+  else if (guia.naRota && p.desvio > FORA_DA_ROTA_M && !pos.parado) guia.fora++;
+  if (guia.fora >= FORA_LEITURAS &&
+      Date.now() - guia.ultimoRecalculo > RECALCULO_MIN_MS) {
+    guia.ultimoRecalculo = Date.now();
+    guia.fora = 0; guia.naRota = false;
+    recalculando = rota.destino_valor;
+    pedeRota(rota.destino_valor, true);
+    return;
+  }
+  if (!guia.naRota) return;
+
+  if (p.total - p.ao_longo < CHEGOU_M) {
+    if (!guia.chegou) {
+      guia.chegou = true;
+      fala('Você chegou. ' + (rota.destino_pedido || ''));
+    }
+    return;
+  }
+
+  var man = Guia.proxima(guia.lista, p.ao_longo);
+  if (!man) return;
+  var d = man.dist - p.ao_longo;
+  el.textContent = d < GUIA_PERTO_M ? Guia.frase(man, 0)
+                                    : 'Em ' + Math.round(d) + ' m: ' + man.texto;
+  el.style.display = 'block';
+  /* cada manobra e' dita no maximo duas vezes; a chave leva o texto porque
+     depois de recalcular o mesmo cruzamento pode virar outra instrucao */
+  var k = Guia.chave([man.lon, man.lat]) + man.texto;
+  if (d <= GUIA_PERTO_M) {
+    if (!guia.ditas[k + ':perto']) {
+      guia.ditas[k + ':perto'] = guia.ditas[k + ':longe'] = 1;
+      fala(Guia.frase(man, d), true);
+    }
+  } else if (d <= GUIA_LONGE_M && !guia.ditas[k + ':longe']) {
+    guia.ditas[k + ':longe'] = 1;
+    fala(Guia.frase(man, d));
+  }
+}
+
+/* Seguranca tambem fala, mas so' na mudanca: entrar no raio, chegar perto,
+   perder o GPS com rota tracada. Repetir a cada segundo seria barulho. */
+function falaFogo(nivel, distancia) {
+  if (nivel === nivelFogo) return;
+  var antes = nivelFogo;
+  nivelFogo = nivel;
+  if (nivel === 'dentro') fala('Atenção: você está na área de desmonte.', true);
+  else if (nivel === 'perto' && antes === '')
+    fala('Atenção: área de desmonte a ' + Math.round(distancia) + ' metros.', true);
+}
+
+function falaGps() {
+  var tem = !!(pos && pos.tem_fix);
+  if (tinhaFix && !tem && rota) fala('Sinal de GPS perdido.', true);
+  tinhaFix = tem;
+}
+
+function trocaVoz() {
+  vozLigada = !vozLigada;
+  chave('chVoz', vozLigada);
+  try { localStorage.setItem('ptxnav_voz', vozLigada ? '1' : '0'); } catch (e) { }
+  if (vozLigada) fala('Voz ligada.', true);
+}
+
+function mostraEstadoVoz(e) {
+  var el = document.getElementById('mnVozEstado');
+  var problema = e && e !== 'pronta' && e !== 'iniciando';
+  el.textContent = problema ? 'Voz: ' + e : '';
+  el.style.display = problema ? '' : 'none';
+}
+
 function escapaHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -1150,7 +1434,7 @@ function pega(url, ok, falha) {
 function carregaMapa() {
   pega('/malha', function (j) {
     if (j.erro) { aviso('mapa', 'Sem mapa em cache: ' + j.erro); return; }
-    malha = j; aviso('mapa', '');
+    malha = j; aviso('mapa', ''); grauMalha = null;
     nucleo = new NucleoRota().carregar(malha);
     if (!esc) enquadra();
     desenha();
@@ -1361,7 +1645,9 @@ function abrePainelFogo() {
 }
 
 function confereDesmonte() {
-  if (!pos || !pos.tem_fix || !desmontes.length) { aviso('fogo', ''); return; }
+  if (!pos || !pos.tem_fix || !desmontes.length) {
+    aviso('fogo', ''); if (ehAndroid) falaFogo('', 0); return;
+  }
   var eu = { lat: pos.lat, lon: pos.lon };
   var dentro = null, menor = 1e9, perto = null;
   for (var i = 0; i < desmontes.length; i++) {
@@ -1381,6 +1667,7 @@ function confereDesmonte() {
   } else {
     aviso('fogo', '');
   }
+  if (ehAndroid) falaFogo(dentro ? 'dentro' : perto ? 'perto' : '', perto ? perto.m : 0);
 }
 
 function lePos() {
@@ -1394,6 +1681,7 @@ function lePos() {
     }
     aplicaModo();
     confereDesmonte();
+    if (ehAndroid) { falaGps(); acompanhaGuia(); }
     desenha();
   }, function () { });
 }
@@ -1405,9 +1693,11 @@ function leEstado() {
       ehAndroid = true;
       document.getElementById('linhaTela').style.display = '';
       document.getElementById('blocoAvisos').style.display = '';
+      document.getElementById('linhaVoz').style.display = '';
       pintaAvisos();
     }
     if (ehAndroid && j.orientacao) mostraOrientacao(j.orientacao);
+    if (ehAndroid) mostraEstadoVoz(j.voz);
     if (j.servidor && j.servidor.indexOf('offline') === 0) {
       aviso('servidor', j.tem_cache
         ? 'Servidor fora do ar — usando o mapa salvo de ' + j.sinc
@@ -1446,7 +1736,7 @@ function pedeRota(v, automatico) {
   pega(url, function (j) {
     if (!automatico) document.getElementById('ir').disabled = false;
     if (!j.ok) {
-      if (!equip && j.offline) { rotaLocal(nome, v); return; }
+      if (!equip && j.offline) { rotaLocal(nome, v, automatico); return; }
       if (equip && j.offline) { rotaLocalAteEquip(nome, automatico); return; }
       if (equip && automatico) {
         /* alvo sumiu no meio do caminho: avisa e mantem a ultima rota */
@@ -1464,7 +1754,7 @@ function pedeRota(v, automatico) {
   }, function () {
     if (!automatico) document.getElementById('ir').disabled = false;
     if (equip) { rotaLocalAteEquip(nome, automatico); return; }
-    rotaLocal(nome, v);
+    rotaLocal(nome, v, automatico);
   });
 }
 
@@ -1508,7 +1798,7 @@ function rotaLocalAteEquip(nome, automatico) {
                 + Math.round(idade) + ' s atras', !automatico);
 }
 
-function rotaLocal(nome, valor) {
+function rotaLocal(nome, valor, automatico) {
   if (!nucleo) { aviso('rota', 'Sem mapa em cache para calcular a rota'); return; }
   var alvo = achaLocal(nome);
   var r = nucleo.rota(pos.lat, pos.lon, nome,
@@ -1516,7 +1806,7 @@ function rotaLocal(nome, valor) {
   if (!r.ok) { aviso('rota', 'Sem rota: ' + r.erro); return; }
   r.destino_pedido = nome;
   r.destino_valor = valor || ('L:' + nome);
-  mostraRota(r, 'Rota calculada no proprio terminal (servidor fora do ar)', true);
+  mostraRota(r, 'Rota calculada no proprio terminal (servidor fora do ar)', !automatico);
 }
 
 function mostraRota(j, nota, enquadrar) {
@@ -1543,6 +1833,7 @@ function mostraRota(j, nota, enquadrar) {
   /* So' na rota nova. A rota ate' equipamento se refaz sozinha a cada 15 s, e
      reenquadrar ali jogava fora o zoom que o operador tinha acabado de dar. */
   if (enquadrar) enquadraRota();
+  preparaGuia(j, enquadrar);
   aplicaModo();
   desenha();
 }
@@ -1566,7 +1857,8 @@ function enquadraRota() {
 }
 
 function limpar() {
-  rota = null;
+  rota = null; guia = null; recalculando = null;
+  document.getElementById('mvManobra').style.display = 'none';
   document.getElementById('rodape').style.display = 'none';
   document.getElementById('limpar').style.display = 'none';
   aviso('rota', ''); aviso('ancoragem', '');
@@ -1765,6 +2057,7 @@ document.getElementById('chPontos').onclick = function () {
   trocaPontos(); chave('chPontos', mostrarLocais);
 };
 document.getElementById('chTela').onclick = trocaOrientacao;
+document.getElementById('chVoz').onclick = trocaVoz;
 document.getElementById('mnLimparAvisos').onclick = limparAvisos;
 setInterval(function () { if (ehAndroid) pintaAvisos(); }, 1000);
 
@@ -1802,7 +2095,9 @@ try {
   if (localStorage.getItem('ptxnav_locais') === '1') mostrarLocais = true;
   if (localStorage.getItem('ptxnav_desmonte') === '0') mostrarDesmonte = false;
   if (localStorage.getItem('ptxnav_foto') === '0') mostrarFoto = false;
+  if (localStorage.getItem('ptxnav_voz') === '0') vozLigada = false;
 } catch (e) { }
+chave('chVoz', vozLigada);
 chave('chPontos', mostrarLocais);
 chave('chDesmonte', mostrarDesmonte);
 document.getElementById('chTema').textContent =

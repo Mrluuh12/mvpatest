@@ -246,7 +246,7 @@ class Sincronizacao(ctx: Context, private val config: Config) {
     }
 
     fun estadoJson(fontePosicao: String, ultimaFalha: String? = null,
-                   versaoApp: String = ""): String {
+                   versaoApp: String = "", voz: String = ""): String {
         // so' a primeira linha da pilha: e' onde esta' o tipo do erro, e o
         // menu nao e' lugar para vinte linhas de stack
         val resumo = ultimaFalha?.lineSequence()
@@ -262,6 +262,7 @@ class Sincronizacao(ctx: Context, private val config: Config) {
                """"versao_app":"${Json.escapa(versaoApp)}",""" +
                """"hash":"${Json.escapa(hashLocal)}","sinc":"${Json.escapa(quandoSinc)}",""" +
                """"orientacao":"${Json.escapa(config.orientacao)}",""" +
+               """"voz":"${Json.escapa(voz)}",""" +
                """"tem_cache":${temCache()}}"""
     }
 

@@ -25,6 +25,9 @@ class Api(
     /** Versao e momento do build, para o menu. */
     var versaoApp: String = ""
 
+    /** Sintetizador de voz. Nulo ate' a tela montar. */
+    var voz: Voz? = null
+
     fun responde(caminho: String, consulta: String?): WebResourceResponse? {
         // a tela vem com ?v=<instalacao> para furar o cache do WebView; ela e'
         // servida pelo carregador de assets, nao por aqui
@@ -49,7 +52,13 @@ class Api(
         }
         val corpo: String = when (caminho) {
             "/pos" -> posicao.json(config.callsign)
-            "/estado" -> sinc.estadoJson(posicao.descricao(), ultimaFalha, versaoApp)
+            "/estado" -> sinc.estadoJson(posicao.descricao(), ultimaFalha, versaoApp,
+                                         voz?.estado ?: "desligada")
+            "/falar" -> {
+                val q = parametros(consulta)
+                voz?.fala(q["t"] ?: "", q["urgente"] == "1")
+                """{"ok":true}"""
+            }
             "/malha" -> ouVazio(sinc.malha())
             "/locais" -> ouVazio(sinc.locais())
             "/areas" -> ouVazio(sinc.areas())

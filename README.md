@@ -189,6 +189,34 @@ Um aviso só volta à tela quando o texto **muda**. Vários são repetidos a cad
 leitura — o do GPS, a cada segundo —, e se cada repetição reiniciasse o tempo
 nenhum sairia nunca.
 
+### Só no tablet: guia falado
+
+Com a rota traçada, o tablet fala e mostra na faixa de cima o que fazer no
+próximo cruzamento:
+
+| Quando | O que diz |
+|---|---|
+| rota nova | "Rota traçada até BRITADOR. 1,3 quilômetros." |
+| ~250 m antes | "Em 250 metros, vire à direita." |
+| ~50 m antes | "Vire à direita." (corta o que estiver sendo dito) |
+| saiu da rota | refaz a rota sozinho e diz "Rota recalculada. 850 metros." |
+| chegou | "Você chegou. BRITADOR" |
+| segurança | entrar/chegar perto da área de desmonte; perder o GPS com rota |
+
+**Cruzamento** é ponta de trecho onde chegam três ou mais trechos (pontas a
+menos de 3 m contam como o mesmo nó). Curva no meio de um trecho não vira
+instrução, nem desvio menor que 25° — senão a voz falaria o tempo todo e o
+operador deixaria de ouvir. Menos de 60° é "mantenha-se à direita"; mais de
+135°, "faça o retorno".
+
+**Fora da rota** é passar de 35 m do traçado por 3 leituras seguidas, andando,
+depois de ter estado nele — a rota começa na via, e o veículo pode sair de uma
+praça. Recalcula no máximo a cada 20 s.
+
+A voz é o sintetizador do Android, sem rede. Se o tablet não tiver voz em
+português, o menu avisa: instale em *Configurações › Idioma › Saída de texto
+em voz*. No menu, *Voz* liga e desliga.
+
 ### Foto aérea da mina no mapa
 
 O mapa desenha a malha viária sobre fundo liso. Com o ortofoto por baixo, o
