@@ -26,4 +26,13 @@ class Config(ctx: Context) {
     var limiteParadoKmh: Double
         get() = prefs.getFloat("limite_parado", 3f).toDouble()
         set(v) = prefs.edit().putFloat("limite_parado", v.toFloat()).apply()
+
+    /**
+     * "paisagem", "retrato" ou "auto". Paisagem e' o padrao porque e' como o
+     * suporte do tablet costuma ficar na cabine; quem monta em pe' troca no
+     * menu, e a escolha sobrevive a reinicio.
+     */
+    var orientacao: String
+        get() = prefs.getString("orientacao", "paisagem") ?: "paisagem"
+        set(v) = prefs.edit().putString("orientacao", v).apply()
 }

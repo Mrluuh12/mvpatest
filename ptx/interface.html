@@ -156,6 +156,16 @@ body.dia .grupoFogo .tit{background:#f3dede;color:#000}
 #fecharFogo{width:100%;margin-top:10px;min-height:60px;font-size:20px;background:#333}
 #fogoVazio{padding:16px;font-size:19px;color:#9ab}
 #desmonte{position:relative}
+#btMenu{position:relative}
+#badgeMenu{position:absolute;top:-6px;right:-6px;background:#fc0;color:#000;
+  border-radius:99px;min-width:24px;height:24px;font-size:14px;font-weight:bold;
+  line-height:24px;display:none}
+#mnAvisos .guardado{padding:10px 12px;margin:6px 0;border-radius:8px;
+  background:#2a2a2a;font-size:16px;line-height:1.3}
+#mnAvisos .guardado.fixo{background:#5a1010;border-left:4px solid #ff3b30}
+#mnAvisos .quando{font-size:12px;color:#9ab;margin-top:3px}
+body.dia #mnAvisos .guardado{background:#e4e4e4}
+body.dia #mnAvisos .guardado.fixo{background:#f7d0d0}
 #badgeFogo{position:absolute;top:-6px;right:-6px;background:#ff3b30;color:#fff;
   border-radius:99px;min-width:24px;height:24px;font-size:14px;font-weight:bold;
   line-height:24px;display:none}
@@ -205,6 +215,15 @@ body.dia .grupoFogo .tit{background:#f3dede;color:#000}
       <button class="chave" id="chPontos">NAO</button></div>
     <div class="item"><span class="rot">Tema</span>
       <button class="chave" id="chTema">NOITE</button></div>
+    <div class="item" id="linhaTela" style="display:none">
+      <span class="rot">Tela</span>
+      <button class="chave" id="chTela">PAISAGEM</button></div>
+
+    <div id="blocoAvisos" style="display:none">
+      <h3>Avisos</h3>
+      <div id="mnAvisos"></div>
+      <button id="mnLimparAvisos" style="width:100%;margin-top:6px">Limpar avisos</button>
+    </div>
 
     <h3>Servidor</h3>
     <div class="item"><span class="rot">Atual</span>
@@ -246,7 +265,7 @@ body.dia .grupoFogo .tit{background:#f3dede;color:#000}
   <button id="eu" style="font-size:17px">EU</button>
   <button id="tema" style="font-size:17px">DIA</button>
   <button id="desmonte" style="font-size:14px">FOGO<span id="badgeFogo"></span></button>
-  <button id="btMenu">&#9776;</button>
+  <button id="btMenu">&#9776;<span id="badgeMenu"></span></button>
 </div>
 
 <div id="rodape">
@@ -502,7 +521,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = NucleoRota
 <script>
 /* Carimbo da tela. Aparece na abertura e no menu: ja' se perdeu tempo
    discutindo se o aparelho estava com a versao nova ou a velha. */
-var VERSAO_INTERFACE = '2026-09-01 · foto aerea, desmonte, menu, frota';
+var VERSAO_INTERFACE = '2026-10-06 · retrato, avisos no menu';
 
 var malha = null, locais = [], areas = null, rota = null;
 var frota = [], frotaAssinatura = '', frotaIdade = null;
@@ -1023,16 +1042,89 @@ function aplicaModo() {
 }
 
 var avisos = {};
+var ehAndroid = false;            /* a mesma tela roda no PTX; ver leEstado */
+
+/* Seguranca nao sai da tela: sem GPS nao se navega, e dentro da area de
+   desmonte o operador tem que ver isso o tempo todo. O resto e' informacao —
+   no tablet aparece por um tempo e vai para o menu, para nao cobrir o mapa
+   indefinidamente. No PTX tudo fica como sempre foi. */
+var AVISOS_FIXOS = { gps: 1, fogo: 1 };
+var AVISO_NA_TELA_MS = 8000;
+
 function aviso(chave, texto, atencao) {
-  if (texto) avisos[chave] = { t: texto, a: !!atencao };
-  else delete avisos[chave];
-  var d = document.getElementById('avisos'), html = '';
-  for (var k in avisos) if (avisos.hasOwnProperty(k))
-    html += '<div class="aviso' + (avisos[k].a ? ' ok' : '') + '">' +
-            escapaHtml(avisos[k].t) + '</div>';
+  if (!texto) {
+    delete avisos[chave];
+  } else {
+    var v = avisos[chave];
+    /* So' volta para a tela quando o texto MUDA. Varios avisos sao repetidos
+       a cada leitura (o do GPS, a cada segundo); se cada repeticao
+       reiniciasse o tempo, nenhum sumiria nunca. */
+    if (!v || v.t !== texto) {
+      avisos[chave] = { t: texto, a: !!atencao, desde: Date.now() };
+    }
+  }
+  pintaAvisos();
+}
+
+function naTela(chave) {
+  if (!ehAndroid || AVISOS_FIXOS[chave]) return true;
+  return Date.now() - avisos[chave].desde < AVISO_NA_TELA_MS;
+}
+
+function pintaAvisos() {
+  var d = document.getElementById('avisos'), html = '', menu = '', guardados = 0;
+  for (var k in avisos) if (avisos.hasOwnProperty(k)) {
+    var v = avisos[k];
+    if (naTela(k)) {
+      html += '<div class="aviso' + (v.a ? ' ok' : '') + '">' +
+              escapaHtml(v.t) + '</div>';
+    } else {
+      guardados++;
+    }
+    var hora = new Date(v.desde);
+    menu += '<div class="guardado' + (AVISOS_FIXOS[k] ? ' fixo' : '') + '">' +
+            escapaHtml(v.t) + '<div class="quando">desde ' +
+            ('0' + hora.getHours()).slice(-2) + ':' +
+            ('0' + hora.getMinutes()).slice(-2) + '</div></div>';
+  }
   d.innerHTML = html;
   d.style.top = (document.getElementById('topo').offsetHeight + 10) + 'px';
+
+  if (ehAndroid) {
+    document.getElementById('mnAvisos').innerHTML =
+      menu || '<div class="quando">Nenhum aviso.</div>';
+    var b = document.getElementById('badgeMenu');
+    b.textContent = guardados;
+    b.style.display = guardados ? 'inline-block' : 'none';
+  }
 }
+
+function limparAvisos() {
+  /* so' os de informacao: os de seguranca saem quando a condicao acaba */
+  for (var k in avisos)
+    if (avisos.hasOwnProperty(k) && !AVISOS_FIXOS[k]) delete avisos[k];
+  pintaAvisos();
+}
+
+/* --- orientacao da tela (so' no tablet) ------------------------------ */
+var ORIENTACOES = ['paisagem', 'retrato', 'auto'];
+var NOME_ORIENTACAO = { paisagem: 'PAISAGEM', retrato: 'RETRATO', auto: 'AUTOMATICA' };
+
+function mostraOrientacao(modo) {
+  document.getElementById('chTela').textContent = NOME_ORIENTACAO[modo] || modo;
+}
+
+function trocaOrientacao() {
+  var atual = (estado && estado.orientacao) || 'paisagem';
+  var prox = ORIENTACOES[(ORIENTACOES.indexOf(atual) + 1) % ORIENTACOES.length];
+  pega('/orientacao?modo=' + prox, function (j) {
+    if (j && j.ok) {
+      if (estado) estado.orientacao = j.orientacao;
+      mostraOrientacao(j.orientacao);
+    }
+  }, function () { });
+}
+
 function escapaHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -1309,6 +1401,13 @@ function lePos() {
 function leEstado() {
   pega('/estado', function (j) {
     estado = j;
+    if (j.plataforma === 'android' && !ehAndroid) {
+      ehAndroid = true;
+      document.getElementById('linhaTela').style.display = '';
+      document.getElementById('blocoAvisos').style.display = '';
+      pintaAvisos();
+    }
+    if (ehAndroid && j.orientacao) mostraOrientacao(j.orientacao);
     if (j.servidor && j.servidor.indexOf('offline') === 0) {
       aviso('servidor', j.tem_cache
         ? 'Servidor fora do ar — usando o mapa salvo de ' + j.sinc
@@ -1665,6 +1764,10 @@ document.getElementById('mnTestar').onclick = testaServidor;
 document.getElementById('chPontos').onclick = function () {
   trocaPontos(); chave('chPontos', mostrarLocais);
 };
+document.getElementById('chTela').onclick = trocaOrientacao;
+document.getElementById('mnLimparAvisos').onclick = limparAvisos;
+setInterval(function () { if (ehAndroid) pintaAvisos(); }, 1000);
+
 document.getElementById('chFoto').onclick = function () {
   mostrarFoto = !mostrarFoto;
   chave('chFoto', mostrarFoto);

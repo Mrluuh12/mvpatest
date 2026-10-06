@@ -168,6 +168,27 @@ outro), em texto, para dar para ler e corrigir na mão.
 > aparece; carretinha sem rádio o sistema não enxerga. Serve para conferir e
 > achar o que passou batido, não para substituir a varredura da área.
 
+### Só no tablet: retrato e avisos que saem da tela
+
+A interface é o mesmo arquivo no PTX e no tablet. O que é só do tablet liga
+quando o app se identifica — `/estado` responde `"plataforma": "android"` — e
+no PTX nada muda.
+
+**Orientação.** No menu, em *Tela*: paisagem, retrato ou automática. A
+escolha fica no app e sobrevive a reinício. Paisagem é o padrão, que é como o
+suporte costuma ficar na cabine; *automática* segue o sensor nas quatro
+posições.
+
+**Avisos.** Os de informação (rota recalculada, servidor fora do ar, frota do
+cache) aparecem por 8 s e vão para o menu, na seção *Avisos*, com o horário. O
+botão ☰ mostra quantos estão guardados. Os de **segurança — sem GPS e área de
+desmonte — não saem da tela** enquanto a condição durar: não se navega sem
+posição, e quem está dentro do raio de fogo tem que ver isso o tempo todo.
+
+Um aviso só volta à tela quando o texto **muda**. Vários são repetidos a cada
+leitura — o do GPS, a cada segundo —, e se cada repetição reiniciasse o tempo
+nenhum sairia nunca.
+
 ### Foto aérea da mina no mapa
 
 O mapa desenha a malha viária sobre fundo liso. Com o ortofoto por baixo, o

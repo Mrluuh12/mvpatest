@@ -2,6 +2,7 @@ package br.com.mina.navegacao
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -42,6 +43,7 @@ class MainActivity : Activity() {
     private val agenda = Executors.newSingleThreadScheduledExecutor()
 
     companion object {
+        private val MODOS = setOf("paisagem", "retrato", "auto")
         private const val PEDIDO_LOCALIZACAO = 1
         // dominio virtual do WebViewAssetLoader; nao vai para a rede
         private const val BASE = "https://appassets.androidplatform.net"
@@ -98,9 +100,24 @@ class MainActivity : Activity() {
         setContentView(ScrollView(this).apply { addView(corpo) })
     }
 
+    /**
+     * O manifesto prende em paisagem para o app abrir sem piscar; daqui em
+     * diante vale a escolha guardada. "auto" segue o sensor, com as quatro
+     * posicoes — tablet de cabine as vezes fica de cabeca para baixo no
+     * suporte, e o sensor resolve sozinho.
+     */
+    private fun aplicaOrientacao(modo: String) {
+        requestedOrientation = when (modo) {
+            "retrato" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            "auto" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+            else -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun monta() {
         config = Config(this)
+        aplicaOrientacao(config.orientacao)
         posicao = Posicao(this).apply { limiteParadoKmh = config.limiteParadoKmh }
         sinc = Sincronizacao(this, config)
         sinc.semeiaSePreciso(this)
@@ -138,6 +155,17 @@ class MainActivity : Activity() {
                 val u = pedido.url
                 if (u.host != "appassets.androidplatform.net") return null
 
+                if (u.path == "/orientacao") {
+                    val modo = u.getQueryParameter("modo") ?: ""
+                    if (modo !in MODOS) {
+                        return resposta(Json.erro("modo deve ser paisagem, retrato ou auto"))
+                    }
+                    config.orientacao = modo
+                    // este metodo roda fora da thread da tela, e girar e'
+                    // coisa que so' a thread da tela pode pedir
+                    runOnUiThread { aplicaOrientacao(modo) }
+                    return resposta("""{"ok":true,"orientacao":"$modo"}""")
+                }
                 if (u.path == "/config") {
                     // o WebView nao entrega o corpo do POST aqui; por isso a
                     // pagina manda o endereco tambem na URL

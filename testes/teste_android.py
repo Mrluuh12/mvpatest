@@ -662,6 +662,129 @@ class TesteAppNoNavegador(unittest.TestCase):
             self.app.servidor = antes
             self.pagina.click("#fecharMenu")
 
+    # ------------------------------------------------ avisos e orientacao
+    # Pedidos do operador: aviso de informacao aparece por um tempo e vai
+    # para o menu; o de seguranca nao sai da tela. Tudo isso so' no tablet —
+    # a tela e' o mesmo arquivo no PTX, e la' nada pode mudar.
+
+    def _na_tela(self, texto):
+        return self.pagina.evaluate(
+            "(t) => document.getElementById('avisos').textContent.indexOf(t) >= 0",
+            texto)
+
+    def _no_menu(self, texto):
+        return self.pagina.evaluate(
+            "(t) => document.getElementById('mnAvisos').textContent.indexOf(t) >= 0",
+            texto)
+
+    def _encurta_o_tempo(self):
+        # oito segundos de espera por teste seria caro; a regra e' a mesma
+        self.pagina.evaluate("() => { AVISO_NA_TELA_MS = 1200; }")
+
+    def tearDown(self):
+        try:
+            self.pagina.evaluate("""() => {
+                AVISO_NA_TELA_MS = 8000; ehAndroid = true;
+                aviso('teste', ''); aviso('gps', ''); aviso('rota', '');
+            }""")
+        except Exception:
+            pass
+
+    def test_07_tela_se_identifica_como_tablet(self):
+        self.espera(self.pagina, "() => ehAndroid === true",
+                    "a tela reconhecer que esta' no tablet")
+
+    def test_08_aviso_de_informacao_sai_da_tela_e_vai_para_o_menu(self):
+        self._encurta_o_tempo()
+        self.pagina.evaluate("() => aviso('teste', 'ROTA RECALCULADA AQUI')")
+        self.assertTrue(self._na_tela("ROTA RECALCULADA AQUI"))
+        time.sleep(2.2)
+        self.assertFalse(self._na_tela("ROTA RECALCULADA AQUI"),
+                         "o aviso de informacao continuou cobrindo o mapa")
+        self.assertTrue(self._no_menu("ROTA RECALCULADA AQUI"),
+                        "o aviso sumiu da tela e nao foi para o menu")
+        selo = self.pagina.inner_text("#badgeMenu").strip()
+        self.assertTrue(selo and int(selo) >= 1,
+                        "o botao do menu nao avisa que ha aviso guardado")
+
+    def test_09_aviso_de_seguranca_nao_sai_da_tela(self):
+        """Sem GPS nao se navega: isso nao pode ir para dentro de um menu.
+
+           Com o GPS perdido de verdade, e nao com aviso injetado: o laco de
+           posicao roda a cada segundo e apagaria um aviso falso, ja' que o
+           tablet do teste tem fix."""
+        self._encurta_o_tempo()
+        self.gps.perde_fix()
+        try:
+            self.espera(self.pagina, "() => window.pos && !pos.tem_fix",
+                        "o fix ser invalidado")
+            self.espera(self.pagina, "() => document.getElementById('avisos')"
+                        ".textContent.indexOf('GPS') >= 0", "o aviso de GPS")
+            time.sleep(2.5)                     # bem alem do tempo de tela
+            self.assertTrue(self._na_tela("GPS"),
+                            "o aviso de GPS saiu da tela")
+        finally:
+            self.gps.registra(self.LAT, self.LON)
+            self.espera(self.pagina, "() => window.pos && pos.tem_fix",
+                        "o fix voltar")
+
+    def test_10_repetir_o_mesmo_texto_nao_segura_o_aviso(self):
+        """Varios avisos sao repetidos a cada leitura. Se cada repeticao
+           reiniciasse o tempo, nenhum sairia da tela nunca."""
+        self._encurta_o_tempo()
+        for _ in range(8):
+            self.pagina.evaluate("() => aviso('teste', 'MESMO TEXTO')")
+            time.sleep(0.3)
+        self.assertFalse(self._na_tela("MESMO TEXTO"),
+                         "repetir o mesmo aviso o prendeu na tela")
+
+    def test_11_texto_novo_volta_para_a_tela(self):
+        self._encurta_o_tempo()
+        self.pagina.evaluate("() => aviso('teste', 'PRIMEIRO')")
+        time.sleep(2.2)
+        self.assertFalse(self._na_tela("PRIMEIRO"))
+        self.pagina.evaluate("() => aviso('teste', 'SEGUNDO')")
+        self.assertTrue(self._na_tela("SEGUNDO"),
+                        "aviso com texto novo nao reapareceu")
+
+    def test_12_limpar_tira_so_os_de_informacao(self):
+        self.pagina.evaluate("""() => {
+            aviso('teste', 'INFORMACAO X'); aviso('gps', 'SEGURANCA Y'); }""")
+        self.pagina.evaluate("() => limparAvisos()")
+        self.assertFalse(self._no_menu("INFORMACAO X"))
+        self.assertTrue(self._na_tela("SEGURANCA Y"),
+                        "limpar apagou um aviso de seguranca")
+
+    def test_13_no_ptx_os_avisos_ficam_como_sempre(self):
+        """A mesma tela, fora do tablet: nada muda."""
+        self.pagina.evaluate("() => { ehAndroid = false; AVISO_NA_TELA_MS = 1200; }")
+        self.pagina.evaluate("() => aviso('teste', 'COMPORTAMENTO DO PTX')")
+        time.sleep(2.2)
+        self.pagina.evaluate("() => pintaAvisos()")
+        self.assertTrue(self._na_tela("COMPORTAMENTO DO PTX"),
+                        "fora do tablet o aviso nao podia ter saido da tela")
+
+    def test_14_orientacao_troca_pelo_menu(self):
+        self.espera(self.pagina,
+                    "() => getComputedStyle(document.getElementById('linhaTela'))"
+                    ".display !== 'none'", "a opcao de tela aparecer")
+        antes = self.app.orientacao
+        try:
+            self.pagina.click("#btMenu")
+            vistos = []
+            for _ in range(3):
+                self.pagina.click("#chTela")
+                time.sleep(0.4)
+                vistos.append((self.app.orientacao,
+                               self.pagina.inner_text("#chTela").strip()))
+            self.assertEqual([v[0] for v in vistos], ["retrato", "auto", "paisagem"],
+                             "a troca nao percorreu os tres modos no app")
+            self.assertEqual([v[1] for v in vistos],
+                             ["RETRATO", "AUTOMATICA", "PAISAGEM"])
+        finally:
+            self.app.orientacao = antes
+            self.pagina.click("#fecharMenu")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -84,6 +84,7 @@ class AppAndroid:
         self.servidor = servidor.rstrip("/")
         self.gps = gps
         self.cache = {}
+        self.orientacao = "paisagem"
         self.cache_foto = {}
         self.frota_guardada = ""
         self.estado_servidor = "nunca contatado"
@@ -186,12 +187,24 @@ class AppAndroid:
                                "detalhe": str(e)})
 
     def estado(self):
-        return {"servidor": self.estado_servidor, "servidor_url": self.servidor,
+        return {"plataforma": "android",
+                "servidor": self.estado_servidor, "servidor_url": self.servidor,
                 "fonte": self.gps.descricao(),
                 "ultima_falha": self.ultima_falha,
                 "versao_app": self.versao_app,
                 "hash": self.hash_local, "sinc": self.sinc,
+                "orientacao": self.orientacao,
                 "tem_cache": "malha.json" in self.cache}
+
+    def muda_orientacao(self, q):
+        """Espelha MainActivity: guarda o modo e responde. Girar de verdade
+           e' com o Android; aqui so' importa o contrato com a tela."""
+        modo = (q.get("modo") or [""])[0]
+        if modo not in ("paisagem", "retrato", "auto"):
+            return json.dumps({"ok": False,
+                               "erro": "modo deve ser paisagem, retrato ou auto"})
+        self.orientacao = modo
+        return json.dumps({"ok": True, "orientacao": modo})
 
     def config(self, q):
         url = (q.get("servidor") or [""])[0].strip().rstrip("/")
@@ -246,6 +259,7 @@ def cria_servidor(app, porta=0):
             if c == "/frota":     return self._envia(app.frota())
             if c == "/desmontes": return self._envia(app.desmontes())
             if c == "/rota":      return self._envia(app.rota(q))
+            if c == "/orientacao": return self._envia(app.muda_orientacao(q))
             if c == "/config":    return self._envia(app.config(q))
             self.send_response(404); self.send_header("Content-Length", "0")
             self.end_headers()

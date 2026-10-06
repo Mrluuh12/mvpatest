@@ -252,12 +252,16 @@ class Sincronizacao(ctx: Context, private val config: Config) {
         val resumo = ultimaFalha?.lineSequence()
             ?.filter { it.isNotBlank() }
             ?.take(2)?.joinToString(" — ")?.take(200) ?: ""
-        return """{"servidor":"${Json.escapa(estadoServidor)}",""" +
+        // "plataforma" e' o que a tela usa para ligar o que e' so' do tablet:
+        // a interface e' o mesmo arquivo no PTX, e la' nada disso muda
+        return """{"plataforma":"android",""" +
+               """"servidor":"${Json.escapa(estadoServidor)}",""" +
                """"servidor_url":"${Json.escapa(config.servidor)}",""" +
                """"fonte":"${Json.escapa(fontePosicao)}",""" +
                """"ultima_falha":"${Json.escapa(resumo)}",""" +
                """"versao_app":"${Json.escapa(versaoApp)}",""" +
                """"hash":"${Json.escapa(hashLocal)}","sinc":"${Json.escapa(quandoSinc)}",""" +
+               """"orientacao":"${Json.escapa(config.orientacao)}",""" +
                """"tem_cache":${temCache()}}"""
     }
 
