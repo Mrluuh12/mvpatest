@@ -15,8 +15,11 @@ desenvolvimento, por exemplo), ela e' usada — e' mais rapida e le formatos que
 este leitor nao alcanca, como TIFF com JPEG dentro.
 """
 
+import json
 import math
 import os
+import re
+import shutil
 import struct
 import sys
 import threading
@@ -944,7 +947,8 @@ def abrir_fontes(caminhos, proj_grid, crs="auto", sem_datum=False,
 
 def gerar_mosaico(caminhos, proj_grid, saida, proj_foto=None, limites=None,
                   ladrilho=LADRILHO, qualidade=85, mais_fino=None,
-                  registrar=print, crs="auto", sem_datum=False, fundos=None):
+                  registrar=print, crs="auto", sem_datum=False, fundos=None,
+                  trabalhadores=None):
     """Corta as fotos em ladrilhos ja' na grid da mina. Devolve o manifesto.
 
     Aceita varios .tif: levantamento de mina costuma vir em folhas separadas,
@@ -1029,7 +1033,9 @@ def gerar_mosaico(caminhos, proj_grid, saida, proj_foto=None, limites=None,
               and all(f.rapido is not None for f in fontes))
     # Trabalhadores em paralelo so' no caminho rapido: o leitor de Python puro
     # tem um cache de blocos compartilhado, que nao aguenta concorrencia.
-    trabalhadores = min(8, (os.cpu_count() or 2)) if rapido else 1
+    if trabalhadores is None:
+        trabalhadores = min(8, (os.cpu_count() or 2))
+    trabalhadores = max(1, trabalhadores) if rapido else 1
     registrar(f"{len(fontes)} foto(s), {len(niveis)} niveis, ate {total} ladrilhos")
     if rapido:
         registrar(f"leitura pelo GDAL (rasterio), {trabalhadores} em paralelo")
@@ -1413,6 +1419,260 @@ def achar_tifs(caminhos):
     return achados
 
 
+# ---------------------------------------------------------------- versoes
+#
+# A foto e' refeita de tempos em tempos (voo novo de uma area). Para trocar
+# sem derrubar ninguem, cada conversao vai para uma pasta propria:
+#
+#   foto/manifesto.json         <- aponta a versao em uso ("id")
+#   foto/20261014_153000/...    <- ladrilhos desta versao
+#   foto/20260901_080000/...    <- a anterior, para quem ainda esta' nela
+#
+# O manifesto do topo so' e' trocado quando a versao nova esta' inteira no
+# disco: quem pede ladrilho nunca ve meia foto. E como o id vai no caminho do
+# ladrilho, o tablet sabe que o que guardou e' de outra versao.
+
+PADRAO_VERSAO = re.compile(r"^\d{8}_\d{6}(_\d+)?$")
+
+
+def assinatura(caminhos):
+    """Nome, tamanho e data de cada .tif: muda quando chega, sai ou e'
+       trocada uma folha. E' o que diz se a foto esta' em dia com a pasta."""
+    saida = []
+    for c in caminhos:
+        try:
+            st = os.stat(c)
+        except OSError:
+            continue
+        saida.append([os.path.basename(c), st.st_size, int(st.st_mtime)])
+    return sorted(saida)
+
+
+def mais_novas_primeiro(caminhos):
+    """Onde duas folhas cobrem o mesmo lugar, vale a primeira da lista. A
+       primeira tem que ser a mais nova: voo novo de uma area e' justamente
+       para mostrar o que mudou ali, por cima do levantamento antigo."""
+    def data(c):
+        try:
+            return os.path.getmtime(c)
+        except OSError:
+            return 0
+    return sorted(caminhos, key=lambda c: (-data(c), os.path.basename(c)))
+
+
+def manifesto_em_uso(raiz):
+    try:
+        with open(os.path.join(raiz, "manifesto.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _novo_id(raiz):
+    base = time.strftime("%Y%m%d_%H%M%S")
+    ident, n = base, 2
+    while os.path.exists(os.path.join(raiz, ident)):
+        ident = f"{base}_{n}"; n += 1
+    return ident
+
+
+def _grava_trocando(caminho, texto):
+    """Troca o arquivo de uma vez. No Windows a troca falha enquanto alguem
+       esta' lendo o antigo; e' questao de milissegundos, entao insiste."""
+    tmp = caminho + ".novo"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(texto)
+    for tentativa in range(50):
+        try:
+            os.replace(tmp, caminho)
+            return
+        except PermissionError:
+            time.sleep(0.1)
+    os.replace(tmp, caminho)
+
+
+def publicar_foto(caminhos, proj_grid, raiz, limites=None, registrar=print,
+                  **opcoes):
+    """Converte para uma versao nova e so' entao passa a servi-la.
+
+       Devolve o manifesto publicado. A versao anterior fica no disco (quem
+       esta' com o mapa aberto ainda pede ladrilho dela ate' reler o
+       manifesto); as mais velhas que ela saem."""
+    caminhos = mais_novas_primeiro(caminhos)
+    os.makedirs(raiz, exist_ok=True)
+    anterior = manifesto_em_uso(raiz)
+    ident = _novo_id(raiz)
+    destino = os.path.join(raiz, ident)
+    try:
+        man = gerar_mosaico(caminhos, proj_grid, destino, limites=limites,
+                            registrar=registrar, **opcoes)
+    except Exception:
+        shutil.rmtree(destino, ignore_errors=True)
+        raise
+    usadas = set(man.get("origem", []))
+    publicado = {"id": ident}
+    publicado.update(man)
+    publicado["fontes"] = assinatura(caminhos)
+    publicado["puladas"] = [os.path.basename(c) for c in caminhos
+                            if os.path.basename(c) not in usadas]
+    publicado["gerado_em"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _grava_trocando(os.path.join(raiz, "manifesto.json"),
+                    json.dumps(publicado, ensure_ascii=False, indent=1))
+    registrar(f"foto {ident} publicada: {man.get('ladrilhos', 0)} ladrilhos")
+
+    manter = {ident}
+    if anterior and anterior.get("id"):
+        manter.add(anterior["id"])
+    for nome in os.listdir(raiz):
+        cheio = os.path.join(raiz, nome)
+        if not os.path.isdir(cheio) or nome in manter:
+            continue
+        # versao velha, ou o nivel solto do formato antigo (foto/0, foto/1...)
+        if PADRAO_VERSAO.match(nome) or nome.isdigit():
+            shutil.rmtree(cheio, ignore_errors=True)
+    return publicado
+
+
+class Vigia:
+    """A pasta das ortofotos, vigiada. Copiou .tif novo para la', a foto se
+       refaz sozinha e passa a ser servida, sem reiniciar nada.
+
+       Converter leva de minutos a uma hora, conforme a maquina; enquanto isso
+       a foto anterior continua no ar. Cuidados:
+       - arquivo ainda sendo copiado: so' converte quando a pasta fica igual
+         entre duas olhadas seguidas;
+       - folha que nao abre: entra na assinatura do mesmo jeito, para nao
+         reconverter a cada minuto. Trocou o arquivo, a assinatura muda;
+       - conversao que derruba o processo: a marca no disco conta as
+         tentativas, e depois da segunda desiste ate' a pasta mudar. Sem isso
+         o servidor reiniciaria em laco tentando a mesma coisa.
+    """
+
+    MARCA = ".convertendo.json"
+    TENTATIVAS = 2
+
+    def __init__(self, pasta, raiz, malha, registrar, intervalo=60,
+                 opcoes=None):
+        self.pasta = pasta
+        self.raiz = raiz
+        self.malha = malha              # funcao: devolve a malha atual
+        self.registrar = registrar
+        self.intervalo = intervalo
+        self.opcoes = dict(opcoes or {})
+        self.vista = None               # assinatura da olhada anterior
+        self.situacao = "aguardando a primeira olhada"
+        self.progresso = ""
+        self.ultimo_erro = None
+        self._fio = None
+
+    def estado(self):
+        m = manifesto_em_uso(self.raiz) or {}
+        return {"ativa": True, "pasta": self.pasta, "situacao": self.situacao,
+                "progresso": self.progresso, "ultimo_erro": self.ultimo_erro,
+                "em_uso": m.get("id"), "gerada_em": m.get("gerado_em"),
+                "folhas": len(m.get("origem", [])),
+                "puladas": m.get("puladas", [])}
+
+    def iniciar(self):
+        def laco():
+            while True:
+                try:
+                    self.rodada()
+                except Exception as e:      # nada aqui derruba o servidor
+                    self.ultimo_erro = str(e)
+                    self.registrar("foto", f"vigia: {e}")
+                time.sleep(self.intervalo)
+        self._fio = threading.Thread(target=laco, name="vigia-foto",
+                                     daemon=True)
+        self._fio.start()
+
+    def _marca(self):
+        try:
+            with open(os.path.join(self.raiz, self.MARCA), encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _grava_marca(self, dados):
+        os.makedirs(self.raiz, exist_ok=True)
+        with open(os.path.join(self.raiz, self.MARCA), "w", encoding="utf-8") as f:
+            json.dump(dados, f)
+
+    def rodada(self):
+        """Uma olhada na pasta. Devolve o que fez, para o teste conferir."""
+        if not os.path.isdir(self.pasta):
+            self.situacao = "pasta de ortofotos nao existe"
+            return "sem pasta"
+        tifs = [os.path.join(self.pasta, n) for n in sorted(os.listdir(self.pasta))
+                if n.lower().endswith((".tif", ".tiff"))]
+        if not tifs:
+            # pasta vazia nao apaga a foto: tirar os .tif depois de converter
+            # e' o uso normal
+            self.situacao = "pasta vazia; a foto atual continua"
+            self.vista = None
+            return "vazia"
+        assin = assinatura(tifs)
+        em_uso = manifesto_em_uso(self.raiz) or {}
+        if em_uso.get("fontes") == assin:
+            self.situacao = "em dia"
+            self.vista = None
+            return "em dia"
+        marca = self._marca()
+        if marca and marca.get("fontes") == assin:
+            if marca.get("falhou"):
+                self.situacao = "a ultima conversao destes arquivos falhou"
+                self.ultimo_erro = marca["falhou"]
+                return "falhou antes"
+            if marca.get("tentativas", 0) >= self.TENTATIVAS:
+                self.situacao = ("a conversao destes arquivos nao terminou "
+                                 f"{marca['tentativas']} vezes; troque ou tire "
+                                 "o arquivo problematico")
+                return "desistiu"
+        if assin != self.vista:
+            # mudou desde a ultima olhada: pode estar copiando ainda
+            self.vista = assin
+            self.situacao = "pasta mudou; esperando a copia terminar"
+            return "esperando"
+        malha = self.malha()
+        if malha is None:
+            self.situacao = "esperando a malha carregar"
+            return "sem malha"
+        tentativas = (marca.get("tentativas", 0)
+                      if marca and marca.get("fontes") == assin else 0) + 1
+        self._grava_marca({"fontes": assin, "tentativas": tentativas,
+                           "inicio": time.strftime("%Y-%m-%d %H:%M:%S")})
+        self.situacao = f"convertendo {len(tifs)} folha(s)"
+        self.registrar("foto", f"pasta {self.pasta} mudou: convertendo "
+                               f"{len(tifs)} folha(s), a mais nova por cima")
+
+        def conta(msg):
+            self.progresso = msg.strip()
+            self.registrar("foto", msg.strip())
+        try:
+            man = publicar_foto(tifs, malha.proj, self.raiz,
+                                limites=limites_da_malha(malha),
+                                registrar=conta, **self.opcoes)
+        except Exception as e:
+            self._grava_marca({"fontes": assin, "tentativas": tentativas,
+                               "falhou": str(e)})
+            self.ultimo_erro = str(e)
+            self.situacao = "a ultima conversao destes arquivos falhou"
+            self.registrar("foto", f"conversao falhou: {e}")
+            return "falhou"
+        try:
+            os.remove(os.path.join(self.raiz, self.MARCA))
+        except OSError:
+            pass
+        self.vista = None
+        self.ultimo_erro = None
+        self.progresso = ""
+        self.situacao = "em dia"
+        if man.get("puladas"):
+            self.registrar("foto", "folhas que nao abriram: " +
+                           ", ".join(man["puladas"]))
+        return "converteu"
+
+
 def main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(
@@ -1477,7 +1737,9 @@ def main(argv=None):
 
     limites = None if a.sem_recorte else limites_da_malha(malha)
     print()
-    gerar_mosaico(arquivos, proj_grid, a.saida, limites=limites,
+    # versao nova ao lado da atual: se o servidor estiver no ar, ele passa a
+    # servir esta assim que ela termina, sem precisar reiniciar
+    publicar_foto(arquivos, proj_grid, a.saida, limites=limites,
                   qualidade=a.qualidade, mais_fino=a.mais_fino, crs=a.crs,
                   sem_datum=a.sem_datum, fundos=achar_tifs(a.fundo))
     return 0

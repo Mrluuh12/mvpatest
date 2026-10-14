@@ -122,10 +122,10 @@ class Sincronizacao(ctx: Context, private val config: Config) {
      * Ladrilho da foto aerea: do disco quando ja' veio, do servidor na
      * primeira vez.
      *
-     * Ladrilho nao muda depois de gerado — o servidor manda guardar para
-     * sempre — entao vale gravar e nunca mais perguntar. Numa rede de mina
-     * essa e' a diferenca entre a foto abrir na hora e a tela ficar cinza
-     * esperando o Wi-Fi.
+     * Ladrilho nao muda depois de gerado: foto nova vem numa versao nova, com
+     * o id no caminho (/foto/20261014_153000/3/5/7.jpg). Entao vale gravar e
+     * nunca mais perguntar. Numa rede de mina essa e' a diferenca entre a
+     * foto abrir na hora e a tela ficar cinza esperando o Wi-Fi.
      */
     fun foto(caminho: String): ByteArray? {
         if (!caminhoSeguro(caminho)) return null
@@ -134,6 +134,13 @@ class Sincronizacao(ctx: Context, private val config: Config) {
         if (caminho.endsWith(".json")) {
             val novo = baixaBinario("/foto/$caminho")
             if (novo != null) {
+                val antes = try {
+                    if (arq.isFile) String(arq.readBytes(), Charsets.UTF_8) else ""
+                } catch (e: Exception) {
+                    ""
+                }
+                val id = Json.campo(String(novo, Charsets.UTF_8), "id")
+                if (id.isNotEmpty() && id != Json.campo(antes, "id")) apagaOutrasVersoes(id)
                 try {
                     arq.writeBytes(novo)
                 } catch (e: Exception) {
@@ -161,7 +168,19 @@ class Sincronizacao(ctx: Context, private val config: Config) {
         return bytes
     }
 
-    /** So' o que o mosaico gera: z/x/y.jpg e o manifesto. Nada de subir pasta. */
+    /**
+     * Foto nova no servidor: os ladrilhos guardados sao de outra versao e a
+     * tela nao vai mais pedi-los. Sem apagar, cada atualizacao da foto
+     * deixaria mais uns cem megas esquecidos no tablet.
+     */
+    private fun apagaOutrasVersoes(id: String) {
+        val prefixo = id + "_"
+        pastaFoto.listFiles()?.forEach { f ->
+            if (f.name != "manifesto.json" && !f.name.startsWith(prefixo)) f.delete()
+        }
+    }
+
+    /** So' o que o mosaico gera: id/z/x/y.jpg e o manifesto. Nada de subir pasta. */
     private fun caminhoSeguro(caminho: String) =
         caminho.isNotEmpty() && !caminho.contains("..") &&
         caminho.all { it.isLetterOrDigit() || it == '/' || it == '.' || it == '_' }

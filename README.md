@@ -60,11 +60,14 @@ linha de comando continua existindo e vence o arquivo quando usada.
 Abra `http://localhost:5000/` para conferir o mapa (essa página de bancada usa
 Leaflet e precisa de internet; a do PTX não).
 
-Para subir sozinho no arranque:
+Para rodar **em segundo plano, sem janela** — ninguém fecha sem querer, e
+sobe sozinho quando o Windows liga (como Administrador, uma vez só):
 
 ```bat
-instalar_servico.bat "C:\Modular\Modular.db" 5000
+instalar_servico.bat
 ```
+
+Detalhes em [Rodando em segundo plano](#rodando-em-segundo-plano-sem-janela).
 
 Aponte de preferência para o banco do **servidor DISPATCH**, que atualiza
 primeiro.
@@ -222,10 +225,50 @@ em voz*. No menu, *Voz* liga e desliga.
 O mapa desenha a malha viária sobre fundo liso. Com o ortofoto por baixo, o
 operador reconhece a bancada, a pilha e a praça — e não só a linha da estrada.
 
+#### Atualizando a foto: é só copiar o .tif
+
+Chegou voo novo de uma área? **Copie o `.tif` para a pasta `ortofotos\`**, ao
+lado do programa. Só isso:
+
+1. o servidor olha a pasta a cada minuto. Quando ela muda — e para de mudar,
+   para não pegar arquivo pela metade da cópia — ele converte tudo de novo,
+   em segundo plano;
+2. **onde duas folhas se sobrepõem, vale a mais nova** (pela data do
+   arquivo). Pode deixar a folha antiga da mesma área na pasta: a nova fica
+   por cima;
+3. enquanto converte, a foto atual continua no ar. Quando termina, o
+   servidor passa a servir a nova **sem reiniciar**;
+4. os tablets percebem a foto nova em até 5 min, trocam na tela e apagam os
+   ladrilhos da antiga.
+
+Pasta vazia não apaga a foto: pode tirar os `.tif` depois de convertidos.
+Folha que não abre é pulada e anotada; ela não faz o servidor reconverter a
+cada minuto. Se a conversão derrubar o servidor duas vezes com os mesmos
+arquivos, ele desiste até a pasta mudar — senão reiniciaria em laço.
+
+O andamento aparece em `http://localhost:5000/api/saude`, no bloco `foto`:
+
+```json
+"foto": {"situacao": "convertendo 20 folha(s)",
+         "progresso": "1200/6000 ladrilhos, 9 min feitos, ~36 min pela frente",
+         "em_uso": "20261014_153000", "puladas": []}
+```
+
+**Quanto demora.** Pelo `.exe`, a conversão usa o leitor embutido, que é
+lento: a mina inteira leva perto de uma hora (em segundo plano, sem tirar
+nada do ar). Para minutos, converta uma vez pelo Python com `rasterio`
+(seção abaixo): o servidor no ar pega a versão nova do mesmo jeito.
+
+Na primeira vez depois desta versão, se a pasta `ortofotos\` ainda tiver as
+folhas, ele reconverte tudo uma vez para o formato novo.
+
+Outra pasta: `"ortofotos": "D:\\voos"` no `config.json`. Para desligar a
+vigia: `"ortofotos": ""`.
+
 #### Onde ficam os arquivos
 
-Os `.tif` são **matéria-prima**: lidos uma vez, na conversão, e depois não
-fazem mais parte do sistema. Não precisam morar em pasta nenhuma do programa.
+Os `.tif` são **matéria-prima**: lidos na conversão, e depois não fazem mais
+parte do que o servidor serve.
 
 O levantamento costuma vir em várias folhas, uma por área (BARRAGEM, PDE
 NORTE, RAMPA 4B...). Copie a pasta inteira para o disco local do servidor — em
@@ -236,17 +279,18 @@ C:\navegacao\
 ├── servidor_rotas.exe
 ├── config.json
 ├── Modular.db
-├── ortofotos\            <- as folhas .tif, só para converter
+├── ortofotos\            <- as folhas .tif; copiar aqui atualiza a foto
 │   ├── BARRAGEM_120826_transparent_mosaic_group1.tif
 │   ├── PDE NORTE_250826_transparent_mosaic_group1.tif
 │   └── ... (todas as outras)
 └── foto\                 <- gerada pela conversão; esta o servidor usa
-    ├── manifesto.json
-    └── 0\ 1\ 2\ ...
+    ├── manifesto.json    <- diz qual versão está em uso
+    ├── 20261014_153000\  <- a versão em uso
+    └── 20260901_080000\  <- a anterior (as mais velhas saem sozinhas)
 ```
 
-Depois de gerar a `foto\`, a pasta `ortofotos\` pode sair do servidor. Guarde
-as folhas em outro lugar para quando o levantamento for refeito.
+Guarde as folhas também fora do servidor, para quando o levantamento for
+refeito.
 
 #### Convertendo
 
@@ -347,7 +391,8 @@ para SIRGAS 2000 antes.
 linha do menu nem aparece — é o caso do PTX hoje, que segue igual.
 
 > **Hoje isto vale para o tablet.** O app baixa cada ladrilho uma vez e guarda
-> em disco: ladrilho não muda depois de gerado. O PTX continua sem a foto até
+> em disco: ladrilho não muda depois de gerado — foto nova vem com outra
+> versão no caminho, e o app apaga a antiga. O PTX continua sem a foto até
 > ganhar o mesmo cache.
 
 ### Mantendo o Modular.db em dia sozinho
@@ -411,9 +456,36 @@ O estado da última rodada aparece em `/api/saude`, em `atualizacao_db`.
 > A senha fica em texto puro no `config.json`. Restrinja a permissão do
 > arquivo se isso for problema na sua política.
 
+### Rodando em segundo plano, sem janela
+
+Aberto com dois cliques, o servidor vive numa janela preta que qualquer um
+fecha — e a mina fica sem rota. O `instalar_servico.bat` (como Administrador)
+tira a janela:
+
+- cria a tarefa `ServidorRotasMina`, que sobe **quando o Windows liga**, como
+  SYSTEM, **sem janela nenhuma**. Usuário comum não vê nem consegue parar;
+- roda com `--vigia`: se o servidor cair, ele **volta sozinho** em 5 s. Se
+  cair logo depois de subir (banco sumido, porta ocupada), a espera dobra até
+  5 min, para não encher o log;
+- tira as armadilhas da tarefa agendada do Windows: por padrão ela é **morta
+  depois de 3 dias** rodando e para quando o computador vai para a bateria;
+- grava tudo em `servidor.log`, ao lado do programa (ou onde o `config.json`
+  mandar).
+
+```bat
+instalar_servico.bat              instala e já sobe
+instalar_servico.bat --parar      para agora (volta no próximo arranque)
+instalar_servico.bat --iniciar    sobe de novo
+instalar_servico.bat --remover    tira de vez
+```
+
+Para ver se está no ar: `http://localhost:5000/api/saude`. Com o serviço
+instalado, **não abra mais o `.exe` com dois cliques**: a porta já está
+ocupada, e ele avisa isso e fecha.
+
 ### Rodando 24/7 sem travar
 
-No Windows, **mande a saída para arquivo**:
+Rodando na mão, no Windows, **mande a saída para arquivo**:
 
 ```bat
 servidor_rotas.exe --db "C:\Modular\Modular.db" --log C:\navegacao\servidor.log --sem-console

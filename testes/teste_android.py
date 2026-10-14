@@ -386,6 +386,10 @@ class TesteFotoNoTablet(unittest.TestCase):
         tif = os.path.join(cls.dir, "orto.tif")
         gg.escrever(tif, W, H, px, (res, res), (X0, Y1), epsg=31983,
                     compressao=8, por_faixa=64)
+        cls.mf, cls.gg, cls.malha = mf, gg, malha
+        cls.geo = (W, H, res, X0, Y1)
+        # formato antigo de proposito (ladrilhos soltos em foto/0, foto/1...):
+        # e' o que ja' esta' instalado na mina, e o teste 5 atualiza a partir dele
         cls.foto = os.path.join(cls.dir, "foto")
         mf.gerar_mosaico(tif, malha.proj, cls.foto, proj_foto=utm,
                          limites=mf.limites_da_malha(malha), mais_fino=32.0,
@@ -442,15 +446,21 @@ class TesteFotoNoTablet(unittest.TestCase):
         shutil.rmtree(cls.dir, ignore_errors=True)
 
     def _azul_na_tela(self):
-        return self.pagina.evaluate("""() => {
+        return self._na_tela(2)
+
+    def _na_tela(self, canal):
+        """Pixels onde so' o canal pedido (0 vermelho, 2 azul) esta' forte."""
+        return self.pagina.evaluate("""(k) => {
             var c = document.getElementById('tela');
             var d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
             var n = 0;
             for (var i = 0; i < d.length; i += 4) {
-                if (d[i+2] > 150 && d[i] < 90 && d[i+1] < 90) n++;
+                var ok = d[i+k] > 150;
+                for (var j = 0; j < 3; j++) if (j !== k && d[i+j] >= 90) ok = false;
+                if (ok) n++;
             }
             return n;
-        }""")
+        }""", canal)
 
     def test_1_a_camada_aparece_no_menu(self):
         """Sem foto no servidor a linha fica escondida; com foto, aparece."""
@@ -502,6 +512,41 @@ class TesteFotoNoTablet(unittest.TestCase):
             return n;
         }""")
         self.assertGreater(n, 500, "a malha sumiu embaixo da foto")
+
+    def test_5_foto_nova_no_servidor_chega_sem_reabrir_nada(self):
+        """Voo novo (aqui, vermelho) publicado com o mapa aberto no tablet.
+           A tela tem que trocar sozinha na proxima olhada do manifesto, e o
+           app tem que largar os ladrilhos da foto antiga."""
+        mf, gg = self.mf, self.gg
+        W, H, res, X0, Y1 = self.geo
+        pasta = os.path.join(self.dir, "voo_novo")
+        os.makedirs(pasta, exist_ok=True)
+        tif = os.path.join(pasta, "vermelho.tif")
+        gg.escrever(tif, W, H, bytes([255, 0, 0]) * (W * H), (res, res), (X0, Y1),
+                    epsg=31983, compressao=8, por_faixa=64)
+        antigos = [k for k in self.app.cache_foto if not k.endswith(".json")]
+        self.assertTrue(antigos, "o app nao tinha guardado ladrilho nenhum")
+        man = mf.publicar_foto([tif], self.malha.proj, self.foto,
+                               limites=mf.limites_da_malha(self.malha),
+                               mais_fino=32.0, registrar=lambda *a: None)
+        try:
+            self.assertGreater(self._azul_na_tela(), 20000)
+            # a olhada periodica do manifesto (a cada 15 voltas de 20 s)
+            self.pagina.evaluate("() => { fotoOlhadas = 14; tentaFoto(); }")
+            self.pagina.wait_for_function(
+                "(id) => window.foto && foto.id === id", arg=man["id"], timeout=15000)
+            fim = time.time() + 20
+            while time.time() < fim and self._na_tela(0) < 20000:
+                time.sleep(0.3)
+            self.assertGreater(self._na_tela(0), 20000, "a foto nova nao apareceu")
+            self.assertLess(self._azul_na_tela(), 2000, "sobrou foto antiga na tela")
+            guardados = [k for k in self.app.cache_foto if not k.endswith(".json")]
+            self.assertTrue(guardados)
+            self.assertTrue(all(k.startswith(man["id"] + "/") for k in guardados),
+                            "o app continuou com ladrilho da versao antiga: %r"
+                            % [k for k in guardados if not k.startswith(man["id"])][:3])
+        finally:
+            shutil.rmtree(pasta, ignore_errors=True)
 
 
 @unittest.skipIf(not TEM_PW or not os.path.exists(CHROMIUM),

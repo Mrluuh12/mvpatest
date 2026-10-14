@@ -24,6 +24,18 @@ INTERFACE = os.path.join(RAIZ, "ptx", "interface.html")
 SEGUNDOS_SEM_FIX = 10.0
 
 
+def _campo(corpo, nome):
+    """Espelha Json.campo do app: primeira ocorrencia de "nome": "valor"."""
+    t = corpo.decode("utf-8", "replace") if isinstance(corpo, bytes) else (corpo or "")
+    i = t.find('"%s"' % nome)
+    if i < 0:
+        return ""
+    i = t.find(":", i)
+    a = t.find('"', i)
+    b = t.find('"', a + 1)
+    return t[a + 1:b] if i >= 0 and a >= 0 and b >= 0 else ""
+
+
 class GpsDoTablet:
     """Espelha Posicao.kt: o LocationManager entrega metros por segundo e
        rumo; a idade do fix e' o que decide se a posicao ainda vale."""
@@ -139,10 +151,17 @@ class AppAndroid:
         if rel.endswith(".json"):
             try:
                 _, corpo = self._pega_bytes("/foto/" + rel)
-                self.cache_foto[rel] = corpo
-                return corpo
             except Exception:
                 return self.cache_foto.get(rel)
+            antes = self.cache_foto.get(rel, b"")
+            ident = _campo(corpo, "id")
+            if ident and ident != _campo(antes, "id"):
+                # foto nova: o que esta' guardado e' de outra versao
+                for k in list(self.cache_foto):
+                    if not k.endswith(".json") and not k.startswith(ident + "/"):
+                        del self.cache_foto[k]
+            self.cache_foto[rel] = corpo
+            return corpo
         if rel in self.cache_foto:
             return self.cache_foto[rel]
         try:

@@ -684,7 +684,7 @@ if (typeof module !== 'undefined') module.exports = Guia;
 <script>
 /* Carimbo da tela. Aparece na abertura e no menu: ja' se perdeu tempo
    discutindo se o aparelho estava com a versao nova ou a velha. */
-var VERSAO_INTERFACE = '2026-10-06 · guia falado';
+var VERSAO_INTERFACE = '2026-10-14 · foto atualiza sozinha';
 
 var malha = null, locais = [], areas = null, rota = null;
 var frota = [], frotaAssinatura = '', frotaIdade = null;
@@ -774,6 +774,10 @@ var FOTO_SIMULTANEAS = 6, FOTO_GUARDADAS = 600;
 function carregaFoto() {
   pega('/foto/manifesto.json', function (m) {
     if (!m || !m.niveis || !m.niveis.length || !m.cantos) return;
+    /* mesma versao: nada a fazer. Versao nova: os ladrilhos na memoria sao
+       da foto antiga e tem que sair, senao a tela mistura as duas */
+    if (foto && m.id === foto.id) return;
+    if (foto) fotoImgs = {};
     foto = m;
     /* os ladrilhos da borda do voo tem alfa e vem em PNG; o resto e' JPEG */
     fotoPng = {};
@@ -788,8 +792,11 @@ function carregaFoto() {
 /* Uma tentativa so' nao basta: no arranque o Wi-Fi do tablet as vezes ainda
    nao subiu, e a foto ficava fora pelo resto da sessao inteira. Onde nao ha
    foto servida, isto e' um 404 de trinta bytes de vez em quando. */
+var fotoOlhadas = 0;
 function tentaFoto() {
-  if (!foto) carregaFoto();
+  /* com foto: rele o manifesto a cada 5 min, que e' como uma foto nova
+     chega a quem esta' com o mapa aberto */
+  if (!foto || ++fotoOlhadas % 15 === 0) carregaFoto();
 }
 
 function nivelFoto() {
@@ -813,7 +820,10 @@ function ladrilhoFoto(z, tx, ty, pedir) {
   fotoBaixando++;
   im.onload = function () { im.pronto = true; fotoBaixando--; pedeDesenho(); };
   im.onerror = function () { fotoBaixando--; };
-  im.src = '/foto/' + k + '.' + (fotoPng[k] ? 'png' : (foto.formato || 'jpg'));
+  /* o id da versao vai no caminho: foto nova e' outro endereco, e nenhum
+     cache (do navegador ou do tablet) devolve o ladrilho da antiga */
+  im.src = '/foto/' + (foto.id ? foto.id + '/' : '') + k + '.' +
+           (fotoPng[k] ? 'png' : (foto.formato || 'jpg'));
   return null;
 }
 

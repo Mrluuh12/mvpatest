@@ -29,13 +29,13 @@
  Somente leitura sobre o banco. Nao escreve nada nele.
 =============================================================================
 """
-import argparse, hashlib, heapq, json, math, os, posixpath, re, sqlite3, struct, sys, threading, time
+import argparse, hashlib, heapq, json, math, os, posixpath, re, signal, sqlite3, struct, subprocess, sys, threading, time
 from collections import defaultdict
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-VERSAO = "1.3"
+VERSAO = "1.4"
 
 
 class Registro:
@@ -663,6 +663,7 @@ class Handler(BaseHTTPRequestHandler):
     atualizador = None        # busca do Modular.db nos PTX
     desmontes = None          # areas de exclusao de desmonte
     foto = None               # pasta dos ladrilhos da foto aerea
+    vigia_foto = None         # vigia da pasta de ortofotos
     frota_erro = None         # motivo, para explicar ao operador
     limite_ancoragem = 500.0
     idade_maxima_fix = 60.0   # segundos: acima disso a posicao vira aviso
@@ -684,6 +685,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(corpo)
+
+    @staticmethod
+    def _estado_foto():
+        if Handler.vigia_foto is not None:
+            return Handler.vigia_foto.estado()
+        e = {"ativa": False, "pasta_ladrilhos": Handler.foto}
+        try:
+            with open(os.path.join(Handler.foto, "manifesto.json"),
+                      encoding="utf-8") as f:
+                e["em_uso"] = json.load(f).get("id")
+        except Exception:
+            pass
+        return e
 
     def _envia_foto(self, caminho_rel):
         """Serve um arquivo da pasta da foto aerea.
@@ -748,6 +762,7 @@ class Handler(BaseHTTPRequestHandler):
             saude["atualizacao_db"] = (Handler.atualizador.estado()
                                        if Handler.atualizador
                                        else {"ativa": False})
+            saude["foto"] = self._estado_foto()
             return self._envia(saude)
 
         # antes da checagem da malha: a foto vale mesmo com o banco em falta
@@ -941,7 +956,7 @@ def achar_ao_lado(nome):
 
 
 OPCOES_CONFIG = ("db", "porta", "endereco", "intervalo", "log", "log_max_kb",
-                 "sem_console", "limite_ancoragem")
+                 "sem_console", "limite_ancoragem", "ortofotos")
 
 
 def ler_config(caminho=None):
@@ -973,6 +988,62 @@ def caminho_relativo_ao_programa(caminho):
         return caminho
     perto = achar_ao_lado(caminho)
     return perto or caminho
+
+
+def manter_no_ar():
+    """--vigia: roda o servidor como processo filho e o levanta de novo se ele
+       cair.
+
+       Rodando em segundo plano ninguem ve a janela fechar. A tarefa agendada
+       do Windows so' reinicia o que nem conseguiu abrir — programa que
+       morreu no meio da noite ficava morto ate' alguem reclamar da rota."""
+    filho = [x for x in sys.argv[1:] if x != "--vigia"]
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable] + filho
+    else:
+        cmd = [sys.executable, os.path.abspath(__file__)] + filho
+    atual = {"p": None}
+
+    def encerra(*_):
+        p = atual["p"]
+        if p is not None and p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(timeout=10)
+            except Exception:
+                p.kill()
+        registrar("vigia", "encerrado")
+        os._exit(0)
+    for nome in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        if hasattr(signal, nome):
+            try:
+                signal.signal(getattr(signal, nome), encerra)
+            except Exception:
+                pass
+
+    espera = 5
+    while True:
+        inicio = time.time()
+        try:
+            # sem stdin: o filho nao pode parar esperando um ENTER que
+            # ninguem vai dar (segurar_janela)
+            atual["p"] = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
+        except Exception as e:
+            registrar("vigia", f"nao consegui iniciar o servidor: {e}")
+            time.sleep(60)
+            continue
+        registrar("vigia", f"servidor iniciado (processo {atual['p'].pid})")
+        codigo = atual["p"].wait()
+        durou = time.time() - inicio
+        if durou > 120:
+            espera = 5
+        registrar("vigia", f"o servidor parou (codigo {codigo}) depois de "
+                           f"{durou:.0f}s; sobe de novo em {espera}s")
+        time.sleep(espera)
+        # caindo logo depois de subir, de novo e de novo (porta ocupada, banco
+        # sumido): espera cada vez mais, ate' 5 min, sem encher o log
+        if durou <= 120:
+            espera = min(espera * 2, 300)
 
 
 def segurar_janela(msg=None):
@@ -1102,22 +1173,49 @@ def iniciar_desmontes(a, cfg):
 
 
 def iniciar_foto(a, cfg):
-    """Aponta a pasta dos ladrilhos da foto aerea, quando ha uma."""
+    """Aponta a pasta dos ladrilhos da foto aerea e liga a vigia das ortofotos.
+
+       A pasta fica apontada mesmo sem foto ainda: quando a primeira conversao
+       terminar, ela passa a ser servida sem reiniciar o servidor."""
     caminho = a.foto or cfg.get("foto") or "foto"
     caminho = caminho_relativo_ao_programa(caminho)
-    manifesto = os.path.join(caminho, "manifesto.json")
-    if not os.path.isfile(manifesto):
-        return
     Handler.foto = caminho
+    manifesto = os.path.join(caminho, "manifesto.json")
+    if os.path.isfile(manifesto):
+        try:
+            with open(manifesto, encoding="utf-8") as f:
+                m = json.load(f)
+            registrar("foto", f"{m.get('ladrilhos', '?')} ladrilhos, "
+                              f"{len(m.get('niveis', []))} niveis, de "
+                              f"{m.get('origem', '?')}")
+        except Exception as e:
+            registrar("foto", f"manifesto ilegivel: {e}")
+
+    # "ortofotos": "" no config.json desliga a vigia
+    pasta = a.ortofotos if a.ortofotos is not None else "ortofotos"
+    if not pasta:
+        return
     try:
-        with open(manifesto, encoding="utf-8") as f:
-            m = json.load(f)
-        registrar("foto", f"{m.get('ladrilhos', '?')} ladrilhos, "
-                          f"{len(m.get('niveis', []))} niveis, de "
-                          f"{m.get('origem', '?')}")
+        import mapa_foto
     except Exception as e:
-        registrar("foto", f"manifesto ilegivel: {e}")
-        Handler.foto = None
+        registrar("foto", f"vigia das ortofotos desligada: {e}")
+        return
+    pasta = caminho_relativo_ao_programa(pasta)
+    opcoes = {"trabalhadores": max(1, (os.cpu_count() or 2) // 2)}
+    if a.mais_fino is not None: opcoes["mais_fino"] = a.mais_fino
+    if a.crs: opcoes["crs"] = a.crs
+    if a.sem_datum: opcoes["sem_datum"] = True
+    if a.qualidade_foto is not None: opcoes["qualidade"] = a.qualidade_foto
+    if a.fundo: opcoes["fundos"] = mapa_foto.achar_tifs(a.fundo)
+
+    def malha_atual():
+        return Handler.repo.malha if Handler.repo is not None else None
+
+    Handler.vigia_foto = mapa_foto.Vigia(pasta, caminho, malha_atual, registrar,
+                                         intervalo=a.intervalo_ortofotos,
+                                         opcoes=opcoes)
+    Handler.vigia_foto.iniciar()
+    registrar("foto", f"vigiando {pasta}: .tif novo ali vira foto nova sozinho")
 
 
 def montar_atualizador(a, cfg):
@@ -1192,6 +1290,11 @@ def main():
     ap.add_argument("--foto", metavar="DIR",
                     help="pasta com os ladrilhos da foto aerea "
                          "(padrao: foto/ ao lado do programa)")
+    ap.add_argument("--ortofotos", metavar="DIR",
+                    help="pasta vigiada: copie .tif novo para ela e a foto se "
+                         "refaz sozinha (padrao: ortofotos/ ao lado do programa)")
+    ap.add_argument("--intervalo-ortofotos", type=int, default=60, metavar="S",
+                    help="segundos entre olhadas na pasta de ortofotos")
     ap.add_argument("--gerar-foto", metavar="TIF",
                     help="converte os ortofotos .tif em ladrilhos, e sai. "
                          "Aceita um arquivo ou a pasta com todos eles")
@@ -1218,6 +1321,9 @@ def main():
     ap.add_argument("--log-max-kb", type=int)
     ap.add_argument("--sem-console", action="store_true",
                     help="nao escreve no console (use junto com --log)")
+    ap.add_argument("--vigia", action="store_true",
+                    help="mantem o servidor no ar: se ele cair, sobe de novo. "
+                         "E' o modo da tarefa do instalar_servico.bat")
     g = ap.add_argument_group("frota Rajant (posicao dos equipamentos)")
     g.add_argument("--rajant-cache",
                    help="rajant_ips_cache.json: ip -> nome do radio")
@@ -1251,6 +1357,8 @@ def main():
         a.log = caminho_relativo_ao_programa(a.log)
 
     registrar.configurar(a.log, a.log_max_kb, not a.sem_console)
+    if a.vigia:
+        manter_no_ar()
 
     if a.conferir_db:
         print(f"=== conferindo {a.conferir_db} ===")
@@ -1376,7 +1484,18 @@ def main():
             registrar("db", f"atualizacao automatica desligada: {e}")
     iniciar_desmontes(a, cfg)
     iniciar_foto(a, cfg)
-    srv = ThreadingHTTPServer((a.endereco, a.porta), Handler)
+    try:
+        srv = ThreadingHTTPServer((a.endereco, a.porta), Handler)
+    except OSError as e:
+        # o caso comum: o servidor ja' esta' rodando em segundo plano e alguem
+        # abriu o .exe de novo com dois cliques
+        print()
+        print(f"ERRO: a porta {a.porta} esta' ocupada ({e}).")
+        print("  O servidor provavelmente ja' esta' rodando em segundo plano.")
+        print(f"  Confira: http://localhost:{a.porta}/api/saude")
+        registrar("servidor", f"porta {a.porta} ocupada: {e}")
+        segurar_janela()
+        sys.exit(1)
     if Handler.frota is not None:
         print(f"  frota     : {len(Handler.frota.ips)} radios Rajant, "
               f"GPS a cada {Handler.frota.intervalo}s")
